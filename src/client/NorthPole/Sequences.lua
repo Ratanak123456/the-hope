@@ -131,7 +131,12 @@ end
  unstable and extreme.
 ]]
 local FRAMING={
- Master  ={distance=11.5,lateral=0,height=2.6,swing=32,fov=46,focusDrop=1.4},
+ -- Height raised from 2.6: at eye level the workstation island ran across the
+ -- bottom-right third of the master as one pale, empty plane and was the
+ -- brightest surface in the room. A metre higher the lens looks OVER it, so
+ -- it reads as the angled midground object the blocking is built around
+ -- instead of as a counter the audience is standing behind.
+ Master  ={distance=11.5,lateral=0,height=3.7,swing=32,fov=46,focusDrop=1.1},
  Medium  ={distance=8.2,lateral=2.2,height=0.42,fov=40,focusDrop=0.66},
  Over    ={distance=6.8,lateral=2.4,height=0.55,fov=38,focusDrop=0.5},
  Reaction={distance=7.4,lateral=1.8,height=0.35,fov=40,focusDrop=0.58},
@@ -155,7 +160,11 @@ function Sequences.build(env,c,ui): {Shot}
  local byName={[N.Lyra]=c.lyra,[N.Voss]=c.voss,[N.Hale]=c.hale,[N.Soldier]=c.soldiers[1]}
  local function add(name,duration,subject,from,options)
   local op=options or {}
-  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
+  -- `foreground` is the shot's own list of things that are ALLOWED to pass
+  -- between the lens and the subject (see Camera.lua's `allowed`). Without it
+  -- an object the shot is deliberately shooting past reads as an obstruction
+  -- and the camera corrects away from the framing that was the point.
+  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,foreground=op.foreground,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
   shot.enter=function()
    if op.stage then stage(op.stage) end
    ui.setSubtitle(nil,"");ui.setTitleCard(nil);ui.setBlackout(op.black and 0 or 1)
@@ -188,8 +197,14 @@ function Sequences.build(env,c,ui): {Shot}
    marker:SetAttribute("Subject",shot.primarySubject);marker:SetAttribute("Duration",duration);marker:SetAttribute("Purpose",shot.purpose);marker:SetAttribute("FOV",shot.fov);marker:SetAttribute("Lighting",shot.lighting);marker:SetAttribute("Expression",shot.expression);marker:SetAttribute("Transition",shot.transition)
    return {start=os.clock()}
   end
-  shot.update=function(state,alpha)
-   if op.update then op.update(alpha,alpha*duration) end
+  --[[
+   `dt` is the real render step, threaded through from Opening.lua's loop.
+   Anything with a physical rate - the vehicles' speed, spray and suspension -
+   needs it; anything driven by the authored 0..1 shot parameter does not and
+   deliberately ignores it.
+  ]]
+  shot.update=function(state,alpha,dt)
+   if op.update then op.update(alpha,alpha*duration,dt or 0) end
    c.performance:update(os.clock())
    Cast.updateChains(c.aegis,os.clock())
    if not op.black then Camera.applyShot(shot,alpha,alpha*duration) end
@@ -347,16 +362,59 @@ function Sequences.build(env,c,ui): {Shot}
   the parking apron just inside it, so "passing the gate" is a real event the
   camera can cover rather than an arbitrary stop on open snow.
  ]]
- add("01_BlackRadio",5,function() return Z.BaseCenter end,V(0,10,30),{black=true,light="Exterior",cue="Radio.ExpeditionTransmission",update=function(_,t)
+ --[[
+  The radio over black - but not FIVE SECONDS of a dead frame.
+
+  Measured in Studio, the old shot held pure black for its whole duration with
+  a subtitle appearing three seconds in, and a player has no way to tell that
+  from a game that has hung. The mystery is worth keeping; the ambiguity about
+  whether anything is running is not.
+
+  So the blackout now lifts on a curve rather than cutting: it holds fully
+  opaque while the transmission is still the whole scene, then opens to a
+  little under a third over the back half, where the lead truck's headlamps
+  and the haze over the route are the first things to resolve out of it. The
+  camera is live for the whole shot (it is no longer `black`), looking down
+  the route at the convoy from far off, so what comes up out of the dark is
+  the thing the next shot is about.
+ ]]
+ add("01_BlackRadio",5,function() return env.vehicles[1].model.PrimaryPart end,V(26,7,54),{light="Exterior",fov=42,to=V(22,6,46),pace="Slow",cue="Radio.ExpeditionTransmission",enter=function()
+  -- The shot opens genuinely black; `black=true` is not used because that
+  -- also stops the camera being driven at all, and this shot needs the lens
+  -- already travelling by the time the frame opens.
+  ui.setBlackout(0)
+ end,update=function(a,t,dt)
   if t>=0.6 then ui.setSubtitle(N.Radio,"Arctic Expedition Seven to Command. We have reached the signal’s origin.") end
+  -- 1 is fully clear, 0 is fully black (see ui.setBlackout). Ends just short
+  -- of three-quarters clear, so the cut to the establishing shot is a lift in
+  -- exposure rather than a jump from nothing to a lit landscape.
+  ui.setBlackout(math.clamp((a-0.35)/0.65,0,1)*0.72)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,166),Z.BaseCenter+V(0,0,150),a,dt)
  end})
  -- High and far, with the near ice ridges crossing the bottom of frame: the
  -- convoy is deliberately small here. One clean location card, lower left.
- add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(58,46,88),{light="Exterior",fov=58,to=V(50,39,76),focusOffset=V(0,6,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
+ --[[
+  Lowered, hard, and brought in.
+
+  At 115 studs and a 24-degree elevation this was a map: the convoy, the
+  route, the base and the ice field were all at the same apparent scale, all
+  below the lens, and nothing crossed the near edge of the frame - which is
+  the exact recipe for a tabletop model. The header's own claim that "the
+  near ice ridges cross the bottom of frame" was not true of the shot it was
+  written above; measured offline, the nearest thing in the picture was 60
+  studs away.
+
+  At 72 studs and 10 degrees the ice field has to be looked THROUGH: near
+  shards cross the bottom and the sides at a completely different scale to
+  the convoy, the route runs away from the lens instead of across it, and the
+  base sits small and high in frame where distance puts it. Same four layers
+  the shot always wanted, in an order the eye can actually read.
+ ]]
+ add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(34,13,62),{light="Exterior",fov=58,to=V(29,11,53),focusOffset=V(0,9,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
   ui.setTitleCard({"THE NORTH POLE","Fifteen years before the invasion"},"Location")
- end,update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a)
+ end,update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a,dt)
  end,leave=function() ui.setTitleCard(nil) end})
  --[[
   Alongside, just above hull height: the shot that has to sell weight.
@@ -374,9 +432,17 @@ function Sequences.build(env,c,ui): {Shot}
   centre. Above them, the frame looks slightly down across the route and the
   berm falls below the tyres instead of cutting them off.
  ]]
- add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a)
+ --[[
+  `to` is the important part of this shot now. With a fixed offset the lens
+  was welded to the truck: the hull filled the same pixels for three seconds,
+  and the only evidence of movement was the marker poles ticking past. The
+  camera now falls back nine studs over the shot - ahead of the cab to behind
+  the rear axle - so the truck visibly pulls away from the lens, the poles
+  sweep instead of tick, and the flank is read end to end rather than held.
+ ]]
+ add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,to=V(17.5,1.5,2.5),cue="Machinery.VehicleTracks",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a,dt)
  end})
  --[[
   The wheel itself. A rotating cylinder proves nothing at a distance, so one
@@ -405,23 +471,34 @@ function Sequences.build(env,c,ui): {Shot}
   At 6.4 studs with a 36-degree lens the wheel fills most of the frame, so
   the spokes sweeping past and the tread meeting the snow are the shot.
  ]]
- add("03b_WheelContact",1.6,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a)
+ -- Two seconds rather than 1.6: at this distance the wheel turns nearly twice
+ -- either way, and the extra beat is what lets the eye settle on the contact
+ -- patch instead of only registering that something moved.
+ add("03b_WheelContact",2,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a,dt)
  end})
  -- Arrival: the lead truck passes under the lit gate. Destination, stated.
  -- Closer and tighter than it was: at 42 studs out the gate was a small frame
  -- in the corner of a wide site shot, and the parked apron vehicles read as
  -- the subject. The site gets its own wide next, in 05.
- add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a)
+ --[[
+  The convoy is declared FOREGROUND here, which is the whole point of the shot:
+  the lead truck drives between the lens and the gate on its way through it.
+  Without saying so, the obstruction check reads the truck as a wall - Studio's
+  mid-shot warning caught this one orbiting twice and then abandoning its
+  framing entirely as the truck crossed, which nothing had ever reported
+  because the per-shot report only prints a shot's first frame.
+ ]]
+ add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",foreground={env.vehicles[1].model,env.vehicles[2].model},update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a,dt)
  end})
  -- The site, wide: modules, masts, the drill head and the excavation, all lit
  -- by their own practicals. Held on a slow push so it reads as a place rather
  -- than a fly-past.
- add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a)
+ add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a,dt)
  end})
  -- 06. Inside. A master first - who is in this room and where they stand -
  -- then cut on every speaker.
@@ -430,10 +507,44 @@ function Sequences.build(env,c,ui): {Shot}
  end,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(0.8,0.4,-6.5),{stage="Command",light="Command",fov=40,update=function(_,t)
+ --[[
+  In FRONT of the display and off to one side.
+
+  The panel is built facing the room (+Z) with its bezel at z=-6.55, a fifth
+  of a stud further back, so a lens authored at -6.5 was looking at the BACK
+  of the screen through its own bezel: Studio reported it blocked on every
+  run and the unstick pulled in to 1.5 studs, which rendered as a flat grey
+  card with a subtitle on it.
+
+  Straight out in front is not the answer either - that is exactly where Lyra
+  is standing, and castcheck measured the lens at 1.73 studs from her, i.e.
+  inside her.
+
+  So: four and a half studs to Voss's side and seven and a half out. That
+  clears every mark in the room, passes over the island (its top is at y=3,
+  this looks across at y=5), and at eight and a half studs back the panel
+  fills about half the frame rather than all of it - which is what lets the
+  three pulse bars on it actually be the subject of the shot.
+ ]]
+ -- The pulse bars are the SUBJECT of this shot, and they stand a fifth of a
+ -- stud proud of the screen they are drawn on, so the obstruction ray hits
+ -- them on the way to the panel behind. Declared as foreground, or the camera
+ -- spends the shot swinging away from the only thing it is there to show.
+ add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(-4.5,0.8,7.5),{stage="Command",light="Command",fov=40,foreground=env.pulses,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport")
+ --[[
+  Over Lyra's shoulder, not a plain medium.
+
+  Hale stands back from the island with Voss between him and his own camera
+  side, so his medium was the one shot in the scene the obstruction logic had
+  to correct on every take - and when a listener's breathing moved the margin,
+  it collapsed to a head filling half the frame. It is also simply the better
+  coverage: his first line is an order addressed at the two of them, and
+  shooting it over one of them says so. The same framing already plays clean
+  on his other two lines.
+ ]]
+ human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport",{shot="Over"})
  -- Split in two. As one 128-character card held for six seconds it was the
  -- longest subtitle in the cinematic by a wide margin, and a viewer reading
  -- it is not watching the scene; as two beats it also earns a cut, which is
@@ -449,7 +560,16 @@ function Sequences.build(env,c,ui): {Shot}
   for i,h in c.scientists do Cast.react(h,"Concerned",env.signalDisplay.Position,0.25+(i%3)*0.12) end
   for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Concerned",env.signalDisplay.Position,0.75) end
  end})
- human("06i_BeginDrilling",1.5,N.Hale,"Begin drilling.","Command","Determined","HaleDrill")
+ --[[
+  The scene ends on the ROOM, not on a face.
+
+  "Begin drilling" is the decision the whole conversation has been building to,
+  and a master puts the three of them and the display in one frame as it lands
+  - which is both better coverage and a fix: Hale's medium has Voss standing in
+  its sightline, so it played clean on its first frame and was then corrected,
+  and eventually collapsed, part-way through the line.
+ ]]
+ master("06i_BeginDrilling",1.8,"Command",{light="Command",speaker=N.Hale,text="Begin drilling.",expression="Determined",voice="HaleDrill"})
  -- 07. Insert montage; each insert has a specific prop or action.
  add("07a_DrillRotates",2,function() return env.drill:GetChildren()[1] end,V(5,1,7),{light="Exterior",cue="Machinery.DrillLoop",update=function(_,t) env.drill:PivotTo(env.drillBase*A(0,t*6,0));env.drillDust.Rate=35 end,leave=function() env.drillDust.Rate=0 end})
  -- Ahead of the drill head, not behind it: the HeavyDrill rig is parked at
@@ -555,7 +675,7 @@ function Sequences.build(env,c,ui): {Shot}
  -- snow it was looking across, close enough that the camera check read the
  -- drift as being in the way and pulled the shot in. Six studs up looks over
  -- it, which is also the better angle on a vehicle leaving.
- add("29d_EvacuationVehicles",2,function() return env.vehicles[5].model.PrimaryPart end,V(16,10,-22),{light="Exterior",fov=48,cue="Radio.CommunicationFailure",update=function(a) Env.moveVehicle(env.vehicles[5],Z.BaseCenter+V(13,0,26),Z.BaseCenter+V(9,0,92),a) end})
+ add("29d_EvacuationVehicles",2,function() return env.vehicles[5].model.PrimaryPart end,V(16,10,-22),{light="Exterior",fov=48,cue="Radio.CommunicationFailure",update=function(a,_,dt) Env.moveVehicle(env.vehicles[5],Z.BaseCenter+V(13,0,26),Z.BaseCenter+V(9,0,92),a,dt) end})
  add("29e_TowerFalls",1.7,function() return Z.BaseCenter+V(24,14,-20) end,V(30,6,48),{light="Exterior",cue="Impacts.FacilityCollapse",update=function(a) env.commTower:PivotTo(CF(Z.BaseCenter+V(24,0,-20))*A(0,0,-a*1.25)*CF(-Z.BaseCenter-V(24,0,-20))*env.towerBase) end})
  add("29f_InjuredEvacuation",1.8,function() return c.scientists[5].head end,V(3,1,-8),{light="Emergency",update=function(a)
   Cast.walk(c.scientists[5],Z.ChamberFloor+V(14,2.8,28),Z.ChamberFloor+V(22,2.8,34),a);Cast.act(c.scientists[5],"Help","Afraid",c.soldiers[2].head.Position)

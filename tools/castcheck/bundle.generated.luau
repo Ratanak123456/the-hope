@@ -142,6 +142,20 @@ function Shim.CFrame.Angles(rx,ry,rz)
  return newCF(Shim.V3(0,0,0),col0,col1,col2)
 end
 function Shim.CFrame.fromMatrix(p,xv,yv,zv) return newCF(p,xv,yv,zv) end
+-- Rodrigues' rotation, stored as columns like CFrame.Angles above. Needed
+-- because Camera.applyShot orbits a blocked lens around the focus by rotating
+-- its offset about world up, which is the one correction that keeps a shot's
+-- framing while getting it out of a wall.
+function Shim.CFrame.fromAxisAngle(axis,angle)
+ local u=axis.Unit
+ local c,s=math.cos(angle),math.sin(angle)
+ local t=1-c
+ local x,y,z=u.X,u.Y,u.Z
+ local col0=Shim.V3(t*x*x+c,   t*x*y+s*z, t*x*z-s*y)
+ local col1=Shim.V3(t*x*y-s*z, t*y*y+c,   t*y*z+s*x)
+ local col2=Shim.V3(t*x*z+s*y, t*y*z-s*x, t*z*z+c)
+ return newCF(Shim.V3(0,0,0),col0,col1,col2)
+end
 function Shim.CFrame.lookAt(at,target,up)
  up=up or Shim.V3(0,1,0)
  local forward=(target-at).Unit
@@ -507,9 +521,16 @@ for _,name in {"HopeBloom","HopeSunRays","HopeAtmosphere","HopeGrade"} do
 end
 local services={
  RunService={IsStudio=function() return R.studio end,IsClient=function() return true end,IsServer=function() return false end,
-  RenderStepped={Connect=function() return {Disconnect=function() end} end},
-  Heartbeat={Connect=function() return {Disconnect=function() end} end},
-  Stepped={Connect=function() return {Disconnect=function() end} end}},
+  -- PreRender/PreSimulation/PostSimulation are the current names; the three
+  -- legacy aliases are kept because modules this harness does not own still
+  -- use them. A shim that only knows the deprecated names silently fails the
+  -- moment a module is modernised, which is how it should NOT find out.
+  PreRender={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  PreSimulation={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  PostSimulation={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  RenderStepped={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  Heartbeat={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  Stepped={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end}},
  ReplicatedStorage=nil,
  TweenService={Create=function() return {Play=function() end,Cancel=function() end,Completed={Connect=function() return {Disconnect=function() end} end}} end},
  Lighting=lighting,
@@ -586,7 +607,7 @@ typeof=function(value)
  end
  return rawTypeof(value)
 end
-RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,Env=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
+RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,Env=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
 MOD.Signal=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -1475,6 +1496,123 @@ end
 return Kit
 
 end)()
+MOD.VehicleMotion=(function()
+local script={Parent=ParentProxy}
+local require=req
+--!strict
+--[[
+	Frame-rate-independent motion maths for the cinematic's vehicles.
+
+	This module owns NO instances, NO connections and NO update loop. Env.lua
+	still owns vehicle construction and placement (see its header); this is
+	only the small amount of time-dependent arithmetic that sat inline there
+	and was silently assuming a 60 Hz render.
+
+	Two things were wrong with that, and both are visible rather than
+	theoretical:
+
+	  * speed was derived as `distance * 60`. On a machine rendering at 30 the
+	    truck reported half its real speed, so the snow spray thinned out and
+	    the weight-transfer pitch halved; above 60 both exaggerated.
+	  * the suspension blended 18% of the way toward the solved attitude
+	    ONCE PER RENDERED FRAME, so the hull settled twice as fast at 120 fps
+	    as at 60. "Restrained and heavy" is a time constant, not a per-frame
+	    fraction.
+
+	Everything here is pure: same inputs, same outputs, no globals. That is
+	what makes it checkable without a running game.
+]]
+
+local VehicleMotion = {}
+
+-- A single wheel of a vehicle. `place` is the rigid-placement closure
+-- Kit.rigid returns for that wheel's model; `offset` is its position in the
+-- chassis's own flat (yaw-only) frame. `groundY`/`deflection` are solved each
+-- frame by Env.settleVehicle and are absent until it has run once.
+export type WheelHandle = {
+	model: Model,
+	place: (CFrame) -> (),
+	offset: Vector3,
+	side: number,
+	z: number,
+	groundY: number?,
+	deflection: number?,
+}
+
+-- The vehicle itself. `body` is everything rigid to the hull; `wheels` are
+-- siblings of it so the two move independently. `spin` is accumulated wheel
+-- angle in radians, `speed` is studs/second, and `pitch`/`roll`/`lift` are the
+-- smoothed suspension attitude.
+export type VehicleHandle = {
+	model: Model,
+	body: Model,
+	placeBody: (CFrame) -> (),
+	wheels: { WheelHandle },
+	base: CFrame,
+	length: number,
+	width: number,
+	deckY: number,
+	spin: number,
+	pitch: number,
+	roll: number,
+	lift: number,
+	speed: number,
+	groundY: number?,
+	lastPos: Vector3?,
+	spray: ParticleEmitter?,
+	sprayHost: BasePart?,
+	lights: { SpotLight },
+}
+
+-- Below this, a frame is treated as having no duration at all: dividing by it
+-- would turn floating-point noise into an enormous speed. Roblox can deliver a
+-- zero-length step after a hitch or on the first frame of a resumed session.
+local MIN_STEP = 1e-5
+
+--[[
+	Studs per second covered over `deltaTime`, from a signed distance.
+
+	`distance` is signed (reversing must not spin the wheels forwards) but a
+	speed is not, so the sign is dropped here and kept by the caller where it
+	is still needed.
+]]
+function VehicleMotion.speed(distance: number, deltaTime: number): number
+	if deltaTime <= MIN_STEP then
+		return 0
+	end
+	return math.abs(distance) / deltaTime
+end
+
+--[[
+	The blend factor that moves a value `responsiveness`-per-second of the way
+	toward its target, whatever the frame rate.
+
+	`value += (target - value) * expAlpha(k, dt)` converges on the same curve in
+	the same WALL-CLOCK time at 30, 60 or 240 fps, which a bare per-frame
+	fraction does not. Higher k is a stiffer, faster-settling response; the
+	value returned is always in [0, 1].
+]]
+function VehicleMotion.expAlpha(responsiveness: number, deltaTime: number): number
+	if deltaTime <= MIN_STEP then
+		return 0
+	end
+	return 1 - math.exp(-responsiveness * deltaTime)
+end
+
+--[[
+	Signed acceleration in studs/second^2 between two speeds a frame apart.
+	Used only for the small squat/dive pitch on top of the terrain attitude.
+]]
+function VehicleMotion.acceleration(current: number, previous: number, deltaTime: number): number
+	if deltaTime <= MIN_STEP then
+		return 0
+	end
+	return (current - previous) / deltaTime
+end
+
+return VehicleMotion
+
+end)()
 MOD.Env=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -1482,6 +1620,7 @@ local require=req
 -- One disposable client-local set. Interiors are separate sound stages, never
 -- solid shells superimposed on the exterior. No global Terrain edits to undo.
 local Kit = require(script.Parent.Kit)
+local VehicleMotion = require(script.Parent.VehicleMotion)
 local Env = {}
 local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
 local C = {
@@ -1508,8 +1647,13 @@ local C = {
  -- Lab surfaces: deliberately NOT ivory. A near-white wall under a warm
  -- practical is what turned the command room into a white box with glowing
  -- people in it; these sit low enough to hold detail under a real key light.
+ -- labTrim is the island top, the door frame and the console lips. At 164 it
+ -- was the brightest surface in the command room - brighter than the coats
+ -- (152) and brighter than any face - which put the eye on an empty counter
+ -- in every wide. Brought under the coat ceiling so the people are the
+ -- lightest thing in frame that is not a screen.
  labWall = Color3.fromRGB(126,134,142), labWallDark = Color3.fromRGB(84,92,100),
- labFloor = Color3.fromRGB(58,64,70), labTrim = Color3.fromRGB(150,158,164),
+ labFloor = Color3.fromRGB(58,64,70), labTrim = Color3.fromRGB(130,137,144),
 }
 Env.Colors = C
 Env.Zones = {
@@ -1636,14 +1780,36 @@ local function buildWheel(parent,name)
   on itself at a half-turn the way three does, and reaching further out means
   the pattern sweeps a longer arc for the same rotation.
  ]]
- local rim=Kit.cylinder({name="Rim",size=V(WHEEL_W*1.06,WHEEL_R*1.34,WHEEL_R*1.34),cframe=CF(),color=Color3.fromRGB(88,96,104),material=Enum.Material.Metal},"x")
+ local rim=Kit.cylinder({name="Rim",size=V(WHEEL_W*1.06,WHEEL_R*1.34,WHEEL_R*1.34),cframe=CF(),color=Color3.fromRGB(74,81,89),material=Enum.Material.Metal},"x")
  rim.Parent=m
+ --[[
+  Five RADIAL spokes, not five diameter bars.
+
+  The previous face used full-length bars through the hub, which is ten arms
+  at 36-degree spacing plus a hi-vis cap covering most of the dish. Rendered,
+  that is a white daisy: the brightest object in the whole Arctic sequence,
+  and - because a ten-fold pattern repeats every 36 degrees - one that tells
+  you almost nothing about which way the wheel has turned.
+
+  Radial spokes give five-fold symmetry, and the timing mark below breaks
+  even that, so any rotation at all is unambiguous. The value comes down to
+  sit BETWEEN the hull (96) and the rim dish (74): still the brightest thing
+  on the wheel, so orientation reads, but no longer brighter than the sky.
+ ]]
  for i=1,5 do
-  local spoke=Kit.part({name="Spoke",size=V(WHEEL_W*1.1,WHEEL_R*1.36,0.3),cframe=CF()*A(i*math.pi/5,0,0),color=Color3.fromRGB(176,183,190),material=Enum.Material.Metal})
+  local a=i/5*math.pi*2
+  local spoke=Kit.part({name="Spoke",size=V(WHEEL_W*1.08,WHEEL_R*0.62,0.26),
+   cframe=CF(0,math.cos(a)*WHEEL_R*0.38,math.sin(a)*WHEEL_R*0.38)*A(a,0,0),
+   color=Color3.fromRGB(142,150,158),material=Enum.Material.Metal})
   spoke.Parent=m
  end
- local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.5,WHEEL_R*0.5),cframe=CF(),color=C.hiVis,material=Enum.Material.Metal},"x")
+ -- A small hub, and one hi-vis timing mark out near the rim. The mark is what
+ -- makes a slow roll legible: with it, a quarter turn is obvious in a still
+ -- frame, which is the actual acceptance test for 03b_WheelContact.
+ local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.34,WHEEL_R*0.34),cframe=CF(),color=Color3.fromRGB(108,116,124),material=Enum.Material.Metal},"x")
  cap.Parent=m
+ local mark=Kit.part({name="TimingMark",size=V(WHEEL_W*1.16,WHEEL_R*0.3,0.2),cframe=CF(0,WHEEL_R*0.74,0),color=C.hiVis,material=Enum.Material.SmoothPlastic})
+ mark.Parent=m
  -- Every part above is authored around the origin, so the identity frame is
  -- the wheel's own reference: place(target) then puts the whole wheel where
  -- the axle goes. See Kit.rigid for why this is not Model:PivotTo.
@@ -1769,10 +1935,16 @@ local function vehicle(parent,cf,kind,index)
   table.insert(lights,spot)
   part(body,"TailLight",V(0.42,0.28,0.14),at(side*w*0.34,deckY+0.2,l*0.47),Color3.fromRGB(179,55,44),Enum.Material.Neon,nil,0.15)
  end
- -- The pool the beams land in. Snow under a headlight is the readable part of
- -- a headlight; the cone itself is invisible without volumetrics.
- local pool=part(body,"HeadlampPool",V(w*1.5,0.06,l*1.4),at(0,0.08,-l*1.15),C.warm,Enum.Material.Neon,nil,0.88)
- pool.CastShadow=false;pool.CanQuery=false
+ --[[
+  There is deliberately no fake light "pool" geometry here any more.
+
+  A Neon slab parented to `body` is rigid to the hull, so it pitched and
+  rolled with the suspension and slid over the snow as one hard-edged glowing
+  rectangle a stud in front of the bumper - visibly a prop, and the most
+  eye-catching thing in the convoy shots. The SpotLight above already lands a
+  real, terrain-following pool on the snow, which is the whole reason it is
+  aimed ahead of the bull bar and pitched down; that is what the shot shows.
+ ]]
 
  if kind=="EquipmentCarrier" then
   crate(body,at(0,deckY+1.7,l*0.2),V(4,1.9,3))
@@ -1813,7 +1985,7 @@ local function vehicle(parent,cf,kind,index)
   another for the whole cinematic (see Kit.rigid).
  ]]
  local placeBody=Kit.rigid(body,cf)
- local handle={model=m,body=body,placeBody=placeBody,wheels=wheels,base=cf,spray=emitter,sprayHost=spray,lights=lights,pool=pool,
+ local handle={model=m,body=body,placeBody=placeBody,wheels=wheels,base=cf,spray=emitter,sprayHost=spray,lights=lights,
   length=l,width=w,deckY=deckY,spin=0,pitch=0,roll=0,lift=0,speed=0}
  -- Place it once so a parked vehicle is already sitting on the snow, level,
  -- before any shot ever touches it.
@@ -2168,16 +2340,39 @@ local function commandRoom(env,rng)
   part(room,"IslandFloorMark",V(0.22,0.06,8),at(side*5.4,0.04,-3.6),C.hiVis,Enum.Material.SmoothPlastic)
  end
 
- -- The focal point ----------------------------------------------------------
- part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-6.4),C.labWallDark)
- env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-6.4)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
- part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-6.55)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  The focal point.
+
+  Stood back from z=-6.4 to -9.2. At the old depth the panel was only about
+  six studs beyond the people working at the island, and all three of them
+  face it - so every reverse angle in the scene was taken from BEHIND it.
+  Measured in Studio, the dialogue mediums for Lyra and Voss put the lens at
+  z=-6.5, a fifth of a stud past the screen, and the camera's obstruction
+  correction had to swing every one of those shots around it.
+
+  Three studs further back and the same framing clears the panel by over a
+  stud and a half, the room gets a deeper background behind the cast, and the
+  screen is still the thing they are all looking at.
+ ]]
+ part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-9.2),C.labWallDark)
+ env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-9.2)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
+ part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-9.35)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  ON THE ROOM SIDE of the panel.
+
+  The display is built with no yaw, so its local -Z (which is what Roblox
+  calls a part's Front, and what Kit.label defaults to) points AWAY from the
+  people standing at the island. The three pulse bars were mounted at local
+  z=-0.18 and the printed marking on Front, so both of them were on the back
+  of the screen: the shot that exists to show the returning signal rendered as
+  a blank blue sheet, which is exactly what it looked like in Studio.
+ ]]
  env.pulses={}
  for i=1,3 do
-  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,-0.18),C.cyan,Enum.Material.Neon)
+  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,0.18),C.cyan,Enum.Material.Neon)
   table.insert(env.pulses,pulse)
  end
- Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan)
+ Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan,Enum.NormalId.Back)
  -- The display's own spill, aimed into the room: this is the light that
  -- actually falls on Lyra's and Voss's faces while they read it.
  local spill=part(room,"DisplaySpill",V(0.3,0.3,0.3),at(0,4.8,-5.6),C.cyan,Enum.Material.Neon,nil,1)
@@ -2599,7 +2794,17 @@ end
  the truck is moving" is true by construction rather than by tuning. Y in the
  supplied endpoints is ignored: the snow decides the height.
 ]]
-function Env.moveVehicle(v,from,to,t)
+--[[
+ How fast the suspension settles, in "fraction of the way per second" terms
+ (see VehicleMotion.expAlpha). 12 reproduces the feel the old fixed 0.18
+ per-frame blend had at 60 fps - 1-(1-0.18)^60 is essentially the same
+ curve - but now it is that same curve at any frame rate, instead of settling
+ twice as fast on a 120 Hz display and half as fast on a 30 Hz one.
+]]
+local SUSPENSION_RESPONSE = 12
+
+function Env.moveVehicle(v,from,to,t,deltaTime: number?)
+ local dt=deltaTime or 0
  local a=Kit.smooth(t)
  local pos=from:Lerp(to,a)
  local direction=to-from
@@ -2615,19 +2820,26 @@ function Env.moveVehicle(v,from,to,t)
   if V(delta.X,0,delta.Z):Dot(V(facing.X,0,facing.Z))<0 then travelled=-travelled end
  end
  v.lastPos=pos
+ -- Rotation from distance covered, never from elapsed time. Unchanged, and
+ -- deliberately so: this is the one relationship that makes the wheels agree
+ -- with the ground under them, and it is already frame-rate independent
+ -- because `travelled` is a distance, not a rate.
  v.spin+=travelled/WHEEL_R
 
- -- Speed drives the body's fore/aft weight transfer and the snow spray.
- local speed=math.abs(travelled)*60
- local accel=speed-(v.speed or 0)
+ -- Speed drives the body's fore/aft weight transfer and the snow spray. Both
+ -- are now per-SECOND quantities derived from the real step, so a 30 fps
+ -- machine and a 144 fps machine show the same truck.
+ local speed=VehicleMotion.speed(travelled,dt)
+ local accel=VehicleMotion.acceleration(speed,v.speed or 0,dt)
  v.speed=speed
- Env.settleVehicle(v,pos,facing,0.18)
+ Env.settleVehicle(v,pos,facing,VehicleMotion.expAlpha(SUSPENSION_RESPONSE,dt))
  -- Squat under acceleration, dive under braking: a small pitch on top of the
- -- terrain attitude, which is what gives the hull a sense of mass.
- v.pitch=math.clamp(v.pitch+math.clamp(accel*0.004,-0.02,0.02),-MAX_PITCH*1.4,MAX_PITCH*1.4)
+ -- terrain attitude, which is what gives the hull a sense of mass. The
+ -- coefficient is now against studs/s^2 rather than a per-frame speed delta,
+ -- hence the much smaller constant; the clamp keeps it restrained either way.
+ v.pitch=math.clamp(v.pitch+math.clamp(accel*0.00007,-0.02,0.02),-MAX_PITCH*1.4,MAX_PITCH*1.4)
 
  if v.spray then v.spray.Rate=(t>0 and t<1) and math.clamp(speed*0.9,0,45) or 0 end
- if v.pool then v.pool.Transparency=0.88 end
 end
 return Env
 
@@ -2656,6 +2868,20 @@ local IS_STUDIO=RunService:IsStudio()
 -- Phases where a human is intentionally not upright. Anything else that
 -- shows up leaning past the check below is a real bug, not a choice.
 local NON_UPRIGHT_PHASES={Brace=true,Stumble=true,Flinch=true,Help=true}
+-- How much of the speaking gesture each lead actually uses. See the Speak
+-- branch in stepAnimate; anyone not listed keeps the full amplitude.
+local GESTURE_RESTRAINT={Hale=0.3,Voss=0.65,Soldier=0.4}
+--[[
+ How far from vertical an ORDINARY standing/talking torso may be before the
+ Studio validator calls it a defect.
+
+ The authored idle and listen poses lean the waist by at most about 12
+ degrees, and a deliberate reaction (Brace, Stumble, Flinch, Help) is exempt
+ above, so this is a genuine envelope rather than a threshold picked to keep
+ the log quiet. It used to be an unnamed `up<0.9`, i.e. nearly 26 degrees -
+ loose enough that a visibly hunched character passed.
+]]
+local MAX_UPRIGHT_DEGREES=16
 local uprightWarned={}
 -- Small named additive poses. Locomotion, gaze and reactions layer on top.
 --[[
@@ -2712,15 +2938,35 @@ local function rig(parent,name,cf)
  Instance.new("Animator").Parent=controller
  return {model=m,root=root,joints={},order={},rigid={},rest={},poses={},applied={},target={},eyes={},clock=0,scale=1,expression="Focused",blend=0.22}
 end
+--[[
+ A decoration rigidly fixed to `host` (hair, collar, belt, a rifle). The
+ WeldConstraint is kept so the part reads as attached in the explorer and so
+ anything that reparents a rig still moves as one piece, but the part is
+ re-ANCHORED afterwards and its world CFrame is driven explicitly from
+ `r.rigid` in Cast.evaluate. See the note there for why nothing in a
+ cinematic rig may be left unanchored.
+]]
 local function attach(r,host,name,size,offset,color,kind,material)
  local p=shape(r.model,name,size,host.CFrame*offset,color,kind,material)
  Kit.weld(host,p)
+ p.Anchored=true
  table.insert(r.rigid,{part=p,host=host,offset=offset})
  return p
 end
 local function joint(r,host,name,jointName,size,offset,pivot,color,kind,material)
  local p=shape(r.model,name,size,host.CFrame*offset*pivot:Inverse(),color,kind,material)
  local m=Kit.joint(jointName,host,p,offset,pivot)
+ -- Kit.joint unanchors its Part1, because that is what a PHYSICALLY jointed
+ -- rig needs. This rig is not one: Cast.evaluate solves the whole chain in
+ -- script and writes world CFrames itself, so the part is re-anchored here.
+ -- Leaving it unanchored made every rig share one physics assembly, and
+ -- writing a member's CFrame moves the WHOLE assembly - so each joint write
+ -- dragged the rig (root included) a little further every frame. Measured in
+ -- Studio: the command-room leads climbed from y=3 to y=30 and tumbled past
+ -- upside down over one conversation, with zero velocity and an anchored
+ -- root, which is exactly the signature of assembly dragging rather than
+ -- simulation.
+ p.Anchored=true
  r.joints[jointName]=m;r.rest[jointName]=offset
  table.insert(r.order,m)
  return p
@@ -2844,6 +3090,20 @@ function Cast.floorUnder(r,x: number,z: number,expected: number): number
  return expected
 end
 
+--[[
+ Solve the whole rig, in one pass, from the root outwards.
+
+ `r.order` is in creation order, which is parent-before-child, so every
+ Part0 below has already been placed this call. Every part in the rig is
+ ANCHORED (see `joint`/`attach`), which is what makes writing world CFrames
+ here safe: on an unanchored, jointed rig Roblox treats each part as a member
+ of one physics assembly and moving a member moves the assembly, so a
+ per-joint CFrame write silently transports the entire character.
+
+ `m.Transform` is still written so the joint's own state matches what was
+ rendered - anything inspecting the rig in Studio, and Cast.evaluate's own
+ blend on the next call, reads the same value the frame actually used.
+]]
 function Cast.evaluate(r)
  for _,m in r.order do
   -- Preserve authored C0/C1. Transform is the additive performance layer,
@@ -2856,6 +3116,12 @@ function Cast.evaluate(r)
   r.applied[m.Name]=value
   m.Transform=value
   m.Part1.CFrame=m.Part0.CFrame*m.C0*value*m.C1:Inverse()
+ end
+ -- Welded decoration follows its host explicitly, for the same reason: an
+ -- anchored host cannot drag an anchored child, and a WeldConstraint between
+ -- two anchored parts does nothing. Creation order is parent-first here too.
+ for _,entry in r.rigid do
+  entry.part.CFrame=entry.host.CFrame*entry.offset
  end
 end
 function Cast.pose(r,name,cf)
@@ -3170,9 +3436,18 @@ function Cast.stepAnimate(r,now)
  -- Working and acting phases. Arms come FORWARD on positive shoulder/elbow
  -- values; every one of these used to be negative, which swung the hands
  -- behind the back and dragged the forearms through the torso.
+ --[[
+  Working at the island: less shoulder, MORE elbow. The old values raised the
+  upper arm 29 degrees and bent the elbow only 60, which puts the hand a whole
+  forearm out in front of the chest - rendered, that is not somebody reading a
+  tablet, it is somebody holding out a tray, and at this rig's arm length it
+  was the most conspicuous thing in the command room. Dropping the shoulder
+  and closing the elbow brings the hands back over the console where the work
+  is, and the silhouette reads as attention rather than presentation.
+ ]]
  if phase=="Scan" or phase=="Operate" or phase=="ClearIce" or phase=="CheckingTablet" then
-  r.poses.LeftShoulder=A(0.5,0,-0.15);r.poses.LeftElbow=A(1.05,0,0)
-  r.poses.RightShoulder=A(0.4,0,0.1);r.poses.RightElbow=A(0.7+(phase=="ClearIce" and math.sin(now*2)*0.15 or 0),0,0)
+  r.poses.LeftShoulder=A(0.32,0,-0.14);r.poses.LeftElbow=A(1.34,0,0)
+  r.poses.RightShoulder=A(0.24,0,0.1);r.poses.RightElbow=A(1.02+(phase=="ClearIce" and math.sin(now*2)*0.15 or 0),0,0)
  elseif phase=="TypingConsole" or phase=="WritingNotes" then
   local tap=math.sin(now*7+seed)*0.08
   r.poses.LeftShoulder=A(0.6+tap,0,-0.12);r.poses.LeftElbow=A(1,0,0)
@@ -3202,7 +3477,17 @@ function Cast.stepAnimate(r,now)
    broken rig, not as emphasis.
   ]]
   local t=now-(r.lineStart or now)
-  local emphasis=0.06+math.sin(t*2.1)*0.09+math.sin(t*3.3+1.1)*0.05
+  --[[
+   Scaled by WHO is talking, because "restrained" is not one number for
+   everyone in the room. Hale is the ranking officer: his lines are orders
+   and questions, and an officer who gestures through them reads as a third
+   scientist rather than as the authority. At 0.3 his hand still lives, but
+   the delivery is carried almost entirely by stillness and where he looks.
+   Voss is analytical and controlled; Lyra, who is the one actually working
+   the problem, keeps the full (already small) amplitude.
+  ]]
+  local restraint=GESTURE_RESTRAINT[r.kind] or 1
+  local emphasis=(0.06+math.sin(t*2.1)*0.09+math.sin(t*3.3+1.1)*0.05)*restraint
   r.poses.RightShoulder=A(0.18+emphasis,0,0.09+(phase=="Warning" and 0.1 or 0));r.poses.RightElbow=A(0.7+emphasis,0,0)
   r.poses.LeftShoulder=A(0.1,0,-0.07);r.poses.LeftElbow=A(0.5,0,0)
  elseif phase=="Authority" then
@@ -3270,6 +3555,20 @@ function Cast.stepAnimate(r,now)
   local lift=Cast.footCorrection(r)
   if math.abs(lift)>0.002 then
    r.poses.Root=CF(0,lift,0)*(r.poses.Root or CF())
+   --[[
+    Grounding is a CONSTRAINT, not a performance beat, so it is written
+    straight into the applied state instead of being eased toward like a pose.
+
+    Clearing r.applied.Root makes the next evaluate take this target exactly
+    (see the alpha there). Easing it was a real, measurable bug: moving the
+    pelvis by x moves both soles by x, so with a 22% blend the correction
+    settles at a fixed point where the remaining error is exactly HALF the
+    original gap and never closes. Studio reported it every frame, on every
+    character, at a stubbornly constant value - "both feet off the floor by
+    0.25 studs" - which is the arithmetic signature of that half, not of a
+    bad pose.
+   ]]
+   r.applied.Root=nil
    Cast.evaluate(r)
   end
  end
@@ -3291,7 +3590,8 @@ function Cast.stepAnimate(r,now)
   ]]
   local problem=nil
   local up=r.torso.CFrame.UpVector:Dot(V(0,1,0))
-  if up<0.9 then problem=`torso UpVector.Y={string.format("%.2f",up)}` end
+  local lean=math.deg(math.acos(math.clamp(up,-1,1)))
+  if lean>MAX_UPRIGHT_DEGREES then problem=`leaning {string.format("%.1f",lean)} degrees` end
   local left=r.model:FindFirstChild("LeftFoot")
   local right=r.model:FindFirstChild("RightFoot")
   local pelvis=r.model:FindFirstChild("LowerTorso")
@@ -3311,7 +3611,18 @@ function Cast.stepAnimate(r,now)
   end
   if problem then
    if not uprightWarned[r] then
-    warn(`[ActorValidation] {r.model.Name} is not standing correctly: {problem} (phase={phase})`)
+    --[[
+     Everything needed to FIND the fault, in one line: who, what phase they
+     were in when it happened, how far from upright they actually are, how
+     far their soles are from the floor this character was placed on, and
+     where their root is in the world so it can be typed straight into the
+     Studio command bar. A warning that only says "not standing correctly"
+     costs a whole extra session to act on.
+    ]]
+    local sole=left and right and math.min(left.Position.Y-left.Size.Y/2,right.Position.Y-right.Size.Y/2) or nil
+    local gap=(sole and r.floorY) and string.format("%.2f",sole-r.floorY) or "n/a"
+    local at=r.root.Position
+    warn(`[ActorValidation] {r.model.Name}: {problem} (phase={phase}, lean={string.format("%.1f",lean)}deg, feet {gap} above floor, root {string.format("%.1f, %.1f, %.1f",at.X,at.Y,at.Z)})`)
    end
    uprightWarned[r]=true
   else
@@ -3932,7 +4243,26 @@ local Settings=require(script.Parent.Parent.Settings)
 local Camera={}
 local env
 local reported={}
-function Camera.configure(handle) env=handle;table.clear(reported) end
+--[[
+ A shot that had to be corrected remembers HOW, for as long as it is on screen.
+
+ The correction is re-tested every frame (the subject moves, so it has to be),
+ but without a memory it also re-DECIDES every frame, and the margins in a
+ crowded room are small enough that a listener's breathing is sometimes enough
+ to flip the answer. Studio caught exactly that on 06a_HaleReport: the shot
+ reported a clean orbit on its first frame and rendered, a second later, as a
+ head filling half the screen, because by then every candidate had failed and
+ the last resort had pulled the lens in to three studs.
+
+ Keyed by shot name and cleared per cinematic run. The stored value is a
+ STRATEGY, never a position, so a held correction still tracks a moving subject
+ instead of freezing the camera in place.
+]]
+local corrections={}
+-- A collapsed shot has no cached strategy to suppress its own warning, so the
+-- warning would otherwise repeat every frame for the length of the shot.
+local collapsedWarned={}
+function Camera.configure(handle) env=handle;table.clear(reported);table.clear(corrections);table.clear(collapsedWarned) end
 local function point(subject)
  if typeof(subject)=="Vector3" then return subject end
  if typeof(subject)=="Instance" and subject:IsA("BasePart") and subject.Parent then return subject.Position end
@@ -3970,7 +4300,7 @@ local function inside(pos,subject,allowed)
   local permitted=false
   if allowed then
    for _,item in allowed do
-    if hit==item or hit:IsDescendantOf(item) then permitted=true break end
+    if hit==item or hit:IsDescendantOf(item) then permitted=true; break end
    end
   end
   if hit.Transparency<0.65 and not permitted and not hit:IsDescendantOf(env.markers) and (not subjectModel or not hit:IsDescendantOf(subjectModel)) then return hit end
@@ -4007,6 +4337,45 @@ local function ease(pace,t)
  end
  return t*t*(3-2*t)
 end
+--[[
+ UNSTICKING, in order of how much of the shot it costs.
+
+ An earlier list tried three progressively closer positions along the same
+ blocked sightline, two sideways nudges, one upward nudge, and then gave up at
+ 1.5 studs from the subject's face. Every entry but the sideways pair kept the
+ SAME direction, so anything blocking the line - a display bezel, a ceiling
+ truss, a listener standing in the way - blocked most of the list too, and the
+ shot ended as an enormous close-up. Measured in Studio, four of the command
+ room's shots were being played at 1.4-1.5 studs instead of their authored
+ 6.8-8.2.
+
+ So: try to keep the shot first. An ORBIT preserves the subject's size in frame
+ exactly - it is still a medium, just from a few degrees round - and a RISE
+ looks over whatever is in the way rather than around it, which is usually the
+ right answer when the obstruction is a person. Only when neither works at any
+ angle does this start giving up distance.
+
+ The orbit is capped at 54 degrees, not further: past about sixty the lens has
+ crossed to the other side of the speaker, which breaks the shot/reverse-shot
+ side Sequences.speakerSide maintains and makes a conversation read as two
+ people who have swapped places between cuts.
+]]
+local STRATEGIES={
+ {kind="orbit",value=16},{kind="orbit",value=-16},
+ {kind="rise",value=1.6},{kind="rise",value=-1.6},
+ {kind="orbit",value=32},{kind="orbit",value=-32},
+ {kind="rise",value=2.9},{kind="rise",value=-2.9},
+ {kind="orbit",value=54},{kind="orbit",value=-54},
+ {kind="pull",value=0.78},{kind="pull",value=0.6},{kind="pull",value=0.44},
+}
+local function strategyPoint(strategy,focus,offset)
+ if strategy.kind=="orbit" then
+  return focus+(CFrame.fromAxisAngle(Vector3.yAxis,math.rad(strategy.value))*offset.Unit)*offset.Magnitude
+ elseif strategy.kind=="rise" then
+  return focus+offset+Vector3.new(0,strategy.value,0)
+ end
+ return focus+offset*strategy.value
+end
 function Camera.applyShot(shot,alpha,elapsed)
  local camera=workspace.CurrentCamera
  local subject=shot.subject()
@@ -4023,20 +4392,53 @@ function Camera.applyShot(shot,alpha,elapsed)
  end
  local allowed=shot.foreground
  local original=Camera.inspect(shot.name,subject,pos,focus,allowed)
- if not original.passed and (original.blocked or original.inside) then
-  local direction=offset.Unit
-  local right=Vector3.new(-direction.Z,0,direction.X)
-  local resolved=false
-  for _,candidate in {focus+offset*0.8,focus+offset*0.6,focus+offset*0.4,pos+right*4,pos-right*4,pos+Vector3.new(0,4,0),focus+direction*1.5} do
-   if not inside(candidate,subject,allowed) and not obstruction(candidate,focus,subject,allowed) and (candidate-focus).Magnitude>1 then pos=candidate;resolved=true;break end
+ local corrected=nil
+ local function usable(candidate)
+  return not inside(candidate,subject,allowed)
+   and not obstruction(candidate,focus,subject,allowed)
+   and (candidate-focus).Magnitude>1
+ end
+ --[[
+  Once a shot has been corrected it STAYS corrected for the rest of the take,
+  even on a frame where the original angle happens to clear again. A lens that
+  snaps back to the authored angle mid-line is a cut, and a cut in the middle
+  of a shot reads worse than holding a slightly compromised one.
+ ]]
+ local held=corrections[shot.name]
+ if held then
+  local candidate=strategyPoint(held,focus,offset)
+  if usable(candidate) then pos=candidate;corrected=held.kind.."(held)" end
+ end
+ if not corrected and not original.passed and (original.blocked or original.inside) then
+  local resolved=nil
+  for _,strategy in STRATEGIES do
+   local candidate=strategyPoint(strategy,focus,offset)
+   if usable(candidate) then
+    corrections[shot.name]=strategy;resolved=candidate;corrected=strategy.kind
+    -- Said out loud the moment it happens. The report below prints once, on a
+    -- shot's FIRST frame, so a shot that starts clean and is obstructed a
+    -- second later - which is what a listener breathing into the sightline
+    -- does - used to degrade completely silently.
+    if RunService:IsStudio() then
+     warn(`[OpeningCamera] {shot.name} corrected mid-shot: {strategy.kind} {strategy.value}`)
+    end
+    break
+   end
   end
-  -- Every candidate still blocked or embedded (rare, but the prior fallback
-  -- had no floor for this case - it just kept the original clipped
-  -- position). Never render from inside geometry: pull in tight on the
-  -- subject along the shot's own direction as a last resort. This shot is
-  -- no longer as intended, but a close, unobstructed view beats a camera
-  -- planted inside a wall or a character.
-  if not resolved then pos=focus+direction*1.5 end
+  if resolved then
+   pos=resolved
+  else
+   -- Every strategy still blocked or embedded. Never render from inside
+   -- geometry: pull in along the shot's own direction as a last resort, but
+   -- no closer than three studs - closer than that is a nostril shot, which
+   -- is worse than the obstruction it is avoiding.
+   pos=focus+offset.Unit*math.max(3,offset.Magnitude*0.3)
+   corrected="collapsed"
+   if RunService:IsStudio() and not collapsedWarned[shot.name] then
+    collapsedWarned[shot.name]=true
+    warn(`[OpeningCamera] {shot.name} COLLAPSED: no angle clear, framing abandoned`)
+   end
+  end
  end
  camera.CameraType=Enum.CameraType.Scriptable
  camera.FieldOfView=shot.fov or 48
@@ -4045,6 +4447,11 @@ function Camera.applyShot(shot,alpha,elapsed)
  if RunService:IsStudio() and (not reported[shot.name] or env.folder:GetAttribute("ValidateEveryFrame")) then
   reported[shot.name]=true
   local r=Camera.inspect(shot.name,subject,pos,focus,allowed)
+  -- A shot that had to be moved is a defect in the AUTHORED framing even when
+  -- the corrected position passes, so say so rather than reporting only the
+  -- position that was finally rendered.
+  r.corrected=corrected or false
+  r.authoredDistance=math.floor(offset.Magnitude*10)/10
   print("[OpeningCamera] "..game:GetService("HttpService"):JSONEncode(r))
   if not r.passed then warn("[OpeningCamera] FAILED: "..shot.name.." — inspect this frame in Studio") end
   env.folder:SetAttribute("LastCameraPassed",r.passed)
@@ -4189,7 +4596,12 @@ end
  unstable and extreme.
 ]]
 local FRAMING={
- Master  ={distance=11.5,lateral=0,height=2.6,swing=32,fov=46,focusDrop=1.4},
+ -- Height raised from 2.6: at eye level the workstation island ran across the
+ -- bottom-right third of the master as one pale, empty plane and was the
+ -- brightest surface in the room. A metre higher the lens looks OVER it, so
+ -- it reads as the angled midground object the blocking is built around
+ -- instead of as a counter the audience is standing behind.
+ Master  ={distance=11.5,lateral=0,height=3.7,swing=32,fov=46,focusDrop=1.1},
  Medium  ={distance=8.2,lateral=2.2,height=0.42,fov=40,focusDrop=0.66},
  Over    ={distance=6.8,lateral=2.4,height=0.55,fov=38,focusDrop=0.5},
  Reaction={distance=7.4,lateral=1.8,height=0.35,fov=40,focusDrop=0.58},
@@ -4213,7 +4625,11 @@ function Sequences.build(env,c,ui): {Shot}
  local byName={[N.Lyra]=c.lyra,[N.Voss]=c.voss,[N.Hale]=c.hale,[N.Soldier]=c.soldiers[1]}
  local function add(name,duration,subject,from,options)
   local op=options or {}
-  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
+  -- `foreground` is the shot's own list of things that are ALLOWED to pass
+  -- between the lens and the subject (see Camera.lua's `allowed`). Without it
+  -- an object the shot is deliberately shooting past reads as an obstruction
+  -- and the camera corrects away from the framing that was the point.
+  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,foreground=op.foreground,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
   shot.enter=function()
    if op.stage then stage(op.stage) end
    ui.setSubtitle(nil,"");ui.setTitleCard(nil);ui.setBlackout(op.black and 0 or 1)
@@ -4246,8 +4662,14 @@ function Sequences.build(env,c,ui): {Shot}
    marker:SetAttribute("Subject",shot.primarySubject);marker:SetAttribute("Duration",duration);marker:SetAttribute("Purpose",shot.purpose);marker:SetAttribute("FOV",shot.fov);marker:SetAttribute("Lighting",shot.lighting);marker:SetAttribute("Expression",shot.expression);marker:SetAttribute("Transition",shot.transition)
    return {start=os.clock()}
   end
-  shot.update=function(state,alpha)
-   if op.update then op.update(alpha,alpha*duration) end
+  --[[
+   `dt` is the real render step, threaded through from Opening.lua's loop.
+   Anything with a physical rate - the vehicles' speed, spray and suspension -
+   needs it; anything driven by the authored 0..1 shot parameter does not and
+   deliberately ignores it.
+  ]]
+  shot.update=function(state,alpha,dt)
+   if op.update then op.update(alpha,alpha*duration,dt or 0) end
    c.performance:update(os.clock())
    Cast.updateChains(c.aegis,os.clock())
    if not op.black then Camera.applyShot(shot,alpha,alpha*duration) end
@@ -4405,16 +4827,59 @@ function Sequences.build(env,c,ui): {Shot}
   the parking apron just inside it, so "passing the gate" is a real event the
   camera can cover rather than an arbitrary stop on open snow.
  ]]
- add("01_BlackRadio",5,function() return Z.BaseCenter end,V(0,10,30),{black=true,light="Exterior",cue="Radio.ExpeditionTransmission",update=function(_,t)
+ --[[
+  The radio over black - but not FIVE SECONDS of a dead frame.
+
+  Measured in Studio, the old shot held pure black for its whole duration with
+  a subtitle appearing three seconds in, and a player has no way to tell that
+  from a game that has hung. The mystery is worth keeping; the ambiguity about
+  whether anything is running is not.
+
+  So the blackout now lifts on a curve rather than cutting: it holds fully
+  opaque while the transmission is still the whole scene, then opens to a
+  little under a third over the back half, where the lead truck's headlamps
+  and the haze over the route are the first things to resolve out of it. The
+  camera is live for the whole shot (it is no longer `black`), looking down
+  the route at the convoy from far off, so what comes up out of the dark is
+  the thing the next shot is about.
+ ]]
+ add("01_BlackRadio",5,function() return env.vehicles[1].model.PrimaryPart end,V(26,7,54),{light="Exterior",fov=42,to=V(22,6,46),pace="Slow",cue="Radio.ExpeditionTransmission",enter=function()
+  -- The shot opens genuinely black; `black=true` is not used because that
+  -- also stops the camera being driven at all, and this shot needs the lens
+  -- already travelling by the time the frame opens.
+  ui.setBlackout(0)
+ end,update=function(a,t,dt)
   if t>=0.6 then ui.setSubtitle(N.Radio,"Arctic Expedition Seven to Command. We have reached the signal’s origin.") end
+  -- 1 is fully clear, 0 is fully black (see ui.setBlackout). Ends just short
+  -- of three-quarters clear, so the cut to the establishing shot is a lift in
+  -- exposure rather than a jump from nothing to a lit landscape.
+  ui.setBlackout(math.clamp((a-0.35)/0.65,0,1)*0.72)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,166),Z.BaseCenter+V(0,0,150),a,dt)
  end})
  -- High and far, with the near ice ridges crossing the bottom of frame: the
  -- convoy is deliberately small here. One clean location card, lower left.
- add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(58,46,88),{light="Exterior",fov=58,to=V(50,39,76),focusOffset=V(0,6,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
+ --[[
+  Lowered, hard, and brought in.
+
+  At 115 studs and a 24-degree elevation this was a map: the convoy, the
+  route, the base and the ice field were all at the same apparent scale, all
+  below the lens, and nothing crossed the near edge of the frame - which is
+  the exact recipe for a tabletop model. The header's own claim that "the
+  near ice ridges cross the bottom of frame" was not true of the shot it was
+  written above; measured offline, the nearest thing in the picture was 60
+  studs away.
+
+  At 72 studs and 10 degrees the ice field has to be looked THROUGH: near
+  shards cross the bottom and the sides at a completely different scale to
+  the convoy, the route runs away from the lens instead of across it, and the
+  base sits small and high in frame where distance puts it. Same four layers
+  the shot always wanted, in an order the eye can actually read.
+ ]]
+ add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(34,13,62),{light="Exterior",fov=58,to=V(29,11,53),focusOffset=V(0,9,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
   ui.setTitleCard({"THE NORTH POLE","Fifteen years before the invasion"},"Location")
- end,update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a)
+ end,update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a,dt)
  end,leave=function() ui.setTitleCard(nil) end})
  --[[
   Alongside, just above hull height: the shot that has to sell weight.
@@ -4432,9 +4897,17 @@ function Sequences.build(env,c,ui): {Shot}
   centre. Above them, the frame looks slightly down across the route and the
   berm falls below the tyres instead of cutting them off.
  ]]
- add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a)
+ --[[
+  `to` is the important part of this shot now. With a fixed offset the lens
+  was welded to the truck: the hull filled the same pixels for three seconds,
+  and the only evidence of movement was the marker poles ticking past. The
+  camera now falls back nine studs over the shot - ahead of the cab to behind
+  the rear axle - so the truck visibly pulls away from the lens, the poles
+  sweep instead of tick, and the flank is read end to end rather than held.
+ ]]
+ add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,to=V(17.5,1.5,2.5),cue="Machinery.VehicleTracks",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a,dt)
  end})
  --[[
   The wheel itself. A rotating cylinder proves nothing at a distance, so one
@@ -4463,23 +4936,34 @@ function Sequences.build(env,c,ui): {Shot}
   At 6.4 studs with a 36-degree lens the wheel fills most of the frame, so
   the spokes sweeping past and the tread meeting the snow are the shot.
  ]]
- add("03b_WheelContact",1.6,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a)
+ -- Two seconds rather than 1.6: at this distance the wheel turns nearly twice
+ -- either way, and the extra beat is what lets the eye settle on the contact
+ -- patch instead of only registering that something moved.
+ add("03b_WheelContact",2,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a,dt)
  end})
  -- Arrival: the lead truck passes under the lit gate. Destination, stated.
  -- Closer and tighter than it was: at 42 studs out the gate was a small frame
  -- in the corner of a wide site shot, and the parked apron vehicles read as
  -- the subject. The site gets its own wide next, in 05.
- add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",update=function(a)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a)
+ --[[
+  The convoy is declared FOREGROUND here, which is the whole point of the shot:
+  the lead truck drives between the lens and the gate on its way through it.
+  Without saying so, the obstruction check reads the truck as a wall - Studio's
+  mid-shot warning caught this one orbiting twice and then abandoning its
+  framing entirely as the truck crossed, which nothing had ever reported
+  because the per-shot report only prints a shot's first frame.
+ ]]
+ add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",foreground={env.vehicles[1].model,env.vehicles[2].model},update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a,dt)
  end})
  -- The site, wide: modules, masts, the drill head and the excavation, all lit
  -- by their own practicals. Held on a slow push so it reads as a place rather
  -- than a fly-past.
- add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a)
+ add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a,_,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a,dt)
  end})
  -- 06. Inside. A master first - who is in this room and where they stand -
  -- then cut on every speaker.
@@ -4488,10 +4972,44 @@ function Sequences.build(env,c,ui): {Shot}
  end,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(0.8,0.4,-6.5),{stage="Command",light="Command",fov=40,update=function(_,t)
+ --[[
+  In FRONT of the display and off to one side.
+
+  The panel is built facing the room (+Z) with its bezel at z=-6.55, a fifth
+  of a stud further back, so a lens authored at -6.5 was looking at the BACK
+  of the screen through its own bezel: Studio reported it blocked on every
+  run and the unstick pulled in to 1.5 studs, which rendered as a flat grey
+  card with a subtitle on it.
+
+  Straight out in front is not the answer either - that is exactly where Lyra
+  is standing, and castcheck measured the lens at 1.73 studs from her, i.e.
+  inside her.
+
+  So: four and a half studs to Voss's side and seven and a half out. That
+  clears every mark in the room, passes over the island (its top is at y=3,
+  this looks across at y=5), and at eight and a half studs back the panel
+  fills about half the frame rather than all of it - which is what lets the
+  three pulse bars on it actually be the subject of the shot.
+ ]]
+ -- The pulse bars are the SUBJECT of this shot, and they stand a fifth of a
+ -- stud proud of the screen they are drawn on, so the obstruction ray hits
+ -- them on the way to the panel behind. Declared as foreground, or the camera
+ -- spends the shot swinging away from the only thing it is there to show.
+ add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(-4.5,0.8,7.5),{stage="Command",light="Command",fov=40,foreground=env.pulses,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport")
+ --[[
+  Over Lyra's shoulder, not a plain medium.
+
+  Hale stands back from the island with Voss between him and his own camera
+  side, so his medium was the one shot in the scene the obstruction logic had
+  to correct on every take - and when a listener's breathing moved the margin,
+  it collapsed to a head filling half the frame. It is also simply the better
+  coverage: his first line is an order addressed at the two of them, and
+  shooting it over one of them says so. The same framing already plays clean
+  on his other two lines.
+ ]]
+ human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport",{shot="Over"})
  -- Split in two. As one 128-character card held for six seconds it was the
  -- longest subtitle in the cinematic by a wide margin, and a viewer reading
  -- it is not watching the scene; as two beats it also earns a cut, which is
@@ -4507,7 +5025,16 @@ function Sequences.build(env,c,ui): {Shot}
   for i,h in c.scientists do Cast.react(h,"Concerned",env.signalDisplay.Position,0.25+(i%3)*0.12) end
   for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Concerned",env.signalDisplay.Position,0.75) end
  end})
- human("06i_BeginDrilling",1.5,N.Hale,"Begin drilling.","Command","Determined","HaleDrill")
+ --[[
+  The scene ends on the ROOM, not on a face.
+
+  "Begin drilling" is the decision the whole conversation has been building to,
+  and a master puts the three of them and the display in one frame as it lands
+  - which is both better coverage and a fix: Hale's medium has Voss standing in
+  its sightline, so it played clean on its first frame and was then corrected,
+  and eventually collapsed, part-way through the line.
+ ]]
+ master("06i_BeginDrilling",1.8,"Command",{light="Command",speaker=N.Hale,text="Begin drilling.",expression="Determined",voice="HaleDrill"})
  -- 07. Insert montage; each insert has a specific prop or action.
  add("07a_DrillRotates",2,function() return env.drill:GetChildren()[1] end,V(5,1,7),{light="Exterior",cue="Machinery.DrillLoop",update=function(_,t) env.drill:PivotTo(env.drillBase*A(0,t*6,0));env.drillDust.Rate=35 end,leave=function() env.drillDust.Rate=0 end})
  -- Ahead of the drill head, not behind it: the HeavyDrill rig is parked at
@@ -4613,7 +5140,7 @@ function Sequences.build(env,c,ui): {Shot}
  -- snow it was looking across, close enough that the camera check read the
  -- drift as being in the way and pulled the shot in. Six studs up looks over
  -- it, which is also the better angle on a vehicle leaving.
- add("29d_EvacuationVehicles",2,function() return env.vehicles[5].model.PrimaryPart end,V(16,10,-22),{light="Exterior",fov=48,cue="Radio.CommunicationFailure",update=function(a) Env.moveVehicle(env.vehicles[5],Z.BaseCenter+V(13,0,26),Z.BaseCenter+V(9,0,92),a) end})
+ add("29d_EvacuationVehicles",2,function() return env.vehicles[5].model.PrimaryPart end,V(16,10,-22),{light="Exterior",fov=48,cue="Radio.CommunicationFailure",update=function(a,_,dt) Env.moveVehicle(env.vehicles[5],Z.BaseCenter+V(13,0,26),Z.BaseCenter+V(9,0,92),a,dt) end})
  add("29e_TowerFalls",1.7,function() return Z.BaseCenter+V(24,14,-20) end,V(30,6,48),{light="Exterior",cue="Impacts.FacilityCollapse",update=function(a) env.commTower:PivotTo(CF(Z.BaseCenter+V(24,0,-20))*A(0,0,-a*1.25)*CF(-Z.BaseCenter-V(24,0,-20))*env.towerBase) end})
  add("29f_InjuredEvacuation",1.8,function() return c.scientists[5].head end,V(3,1,-8),{light="Emergency",update=function(a)
   Cast.walk(c.scientists[5],Z.ChamberFloor+V(14,2.8,28),Z.ChamberFloor+V(22,2.8,34),a);Cast.act(c.scientists[5],"Help","Afraid",c.soldiers[2].head.Position)

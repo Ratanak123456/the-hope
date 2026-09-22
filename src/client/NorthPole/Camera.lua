@@ -8,7 +8,26 @@ local Settings=require(script.Parent.Parent.Settings)
 local Camera={}
 local env
 local reported={}
-function Camera.configure(handle) env=handle;table.clear(reported) end
+--[[
+ A shot that had to be corrected remembers HOW, for as long as it is on screen.
+
+ The correction is re-tested every frame (the subject moves, so it has to be),
+ but without a memory it also re-DECIDES every frame, and the margins in a
+ crowded room are small enough that a listener's breathing is sometimes enough
+ to flip the answer. Studio caught exactly that on 06a_HaleReport: the shot
+ reported a clean orbit on its first frame and rendered, a second later, as a
+ head filling half the screen, because by then every candidate had failed and
+ the last resort had pulled the lens in to three studs.
+
+ Keyed by shot name and cleared per cinematic run. The stored value is a
+ STRATEGY, never a position, so a held correction still tracks a moving subject
+ instead of freezing the camera in place.
+]]
+local corrections={}
+-- A collapsed shot has no cached strategy to suppress its own warning, so the
+-- warning would otherwise repeat every frame for the length of the shot.
+local collapsedWarned={}
+function Camera.configure(handle) env=handle;table.clear(reported);table.clear(corrections);table.clear(collapsedWarned) end
 local function point(subject)
  if typeof(subject)=="Vector3" then return subject end
  if typeof(subject)=="Instance" and subject:IsA("BasePart") and subject.Parent then return subject.Position end
@@ -46,7 +65,7 @@ local function inside(pos,subject,allowed)
   local permitted=false
   if allowed then
    for _,item in allowed do
-    if hit==item or hit:IsDescendantOf(item) then permitted=true break end
+    if hit==item or hit:IsDescendantOf(item) then permitted=true; break end
    end
   end
   if hit.Transparency<0.65 and not permitted and not hit:IsDescendantOf(env.markers) and (not subjectModel or not hit:IsDescendantOf(subjectModel)) then return hit end
@@ -83,6 +102,45 @@ local function ease(pace,t)
  end
  return t*t*(3-2*t)
 end
+--[[
+ UNSTICKING, in order of how much of the shot it costs.
+
+ An earlier list tried three progressively closer positions along the same
+ blocked sightline, two sideways nudges, one upward nudge, and then gave up at
+ 1.5 studs from the subject's face. Every entry but the sideways pair kept the
+ SAME direction, so anything blocking the line - a display bezel, a ceiling
+ truss, a listener standing in the way - blocked most of the list too, and the
+ shot ended as an enormous close-up. Measured in Studio, four of the command
+ room's shots were being played at 1.4-1.5 studs instead of their authored
+ 6.8-8.2.
+
+ So: try to keep the shot first. An ORBIT preserves the subject's size in frame
+ exactly - it is still a medium, just from a few degrees round - and a RISE
+ looks over whatever is in the way rather than around it, which is usually the
+ right answer when the obstruction is a person. Only when neither works at any
+ angle does this start giving up distance.
+
+ The orbit is capped at 54 degrees, not further: past about sixty the lens has
+ crossed to the other side of the speaker, which breaks the shot/reverse-shot
+ side Sequences.speakerSide maintains and makes a conversation read as two
+ people who have swapped places between cuts.
+]]
+local STRATEGIES={
+ {kind="orbit",value=16},{kind="orbit",value=-16},
+ {kind="rise",value=1.6},{kind="rise",value=-1.6},
+ {kind="orbit",value=32},{kind="orbit",value=-32},
+ {kind="rise",value=2.9},{kind="rise",value=-2.9},
+ {kind="orbit",value=54},{kind="orbit",value=-54},
+ {kind="pull",value=0.78},{kind="pull",value=0.6},{kind="pull",value=0.44},
+}
+local function strategyPoint(strategy,focus,offset)
+ if strategy.kind=="orbit" then
+  return focus+(CFrame.fromAxisAngle(Vector3.yAxis,math.rad(strategy.value))*offset.Unit)*offset.Magnitude
+ elseif strategy.kind=="rise" then
+  return focus+offset+Vector3.new(0,strategy.value,0)
+ end
+ return focus+offset*strategy.value
+end
 function Camera.applyShot(shot,alpha,elapsed)
  local camera=workspace.CurrentCamera
  local subject=shot.subject()
@@ -99,20 +157,53 @@ function Camera.applyShot(shot,alpha,elapsed)
  end
  local allowed=shot.foreground
  local original=Camera.inspect(shot.name,subject,pos,focus,allowed)
- if not original.passed and (original.blocked or original.inside) then
-  local direction=offset.Unit
-  local right=Vector3.new(-direction.Z,0,direction.X)
-  local resolved=false
-  for _,candidate in {focus+offset*0.8,focus+offset*0.6,focus+offset*0.4,pos+right*4,pos-right*4,pos+Vector3.new(0,4,0),focus+direction*1.5} do
-   if not inside(candidate,subject,allowed) and not obstruction(candidate,focus,subject,allowed) and (candidate-focus).Magnitude>1 then pos=candidate;resolved=true;break end
+ local corrected=nil
+ local function usable(candidate)
+  return not inside(candidate,subject,allowed)
+   and not obstruction(candidate,focus,subject,allowed)
+   and (candidate-focus).Magnitude>1
+ end
+ --[[
+  Once a shot has been corrected it STAYS corrected for the rest of the take,
+  even on a frame where the original angle happens to clear again. A lens that
+  snaps back to the authored angle mid-line is a cut, and a cut in the middle
+  of a shot reads worse than holding a slightly compromised one.
+ ]]
+ local held=corrections[shot.name]
+ if held then
+  local candidate=strategyPoint(held,focus,offset)
+  if usable(candidate) then pos=candidate;corrected=held.kind.."(held)" end
+ end
+ if not corrected and not original.passed and (original.blocked or original.inside) then
+  local resolved=nil
+  for _,strategy in STRATEGIES do
+   local candidate=strategyPoint(strategy,focus,offset)
+   if usable(candidate) then
+    corrections[shot.name]=strategy;resolved=candidate;corrected=strategy.kind
+    -- Said out loud the moment it happens. The report below prints once, on a
+    -- shot's FIRST frame, so a shot that starts clean and is obstructed a
+    -- second later - which is what a listener breathing into the sightline
+    -- does - used to degrade completely silently.
+    if RunService:IsStudio() then
+     warn(`[OpeningCamera] {shot.name} corrected mid-shot: {strategy.kind} {strategy.value}`)
+    end
+    break
+   end
   end
-  -- Every candidate still blocked or embedded (rare, but the prior fallback
-  -- had no floor for this case - it just kept the original clipped
-  -- position). Never render from inside geometry: pull in tight on the
-  -- subject along the shot's own direction as a last resort. This shot is
-  -- no longer as intended, but a close, unobstructed view beats a camera
-  -- planted inside a wall or a character.
-  if not resolved then pos=focus+direction*1.5 end
+  if resolved then
+   pos=resolved
+  else
+   -- Every strategy still blocked or embedded. Never render from inside
+   -- geometry: pull in along the shot's own direction as a last resort, but
+   -- no closer than three studs - closer than that is a nostril shot, which
+   -- is worse than the obstruction it is avoiding.
+   pos=focus+offset.Unit*math.max(3,offset.Magnitude*0.3)
+   corrected="collapsed"
+   if RunService:IsStudio() and not collapsedWarned[shot.name] then
+    collapsedWarned[shot.name]=true
+    warn(`[OpeningCamera] {shot.name} COLLAPSED: no angle clear, framing abandoned`)
+   end
+  end
  end
  camera.CameraType=Enum.CameraType.Scriptable
  camera.FieldOfView=shot.fov or 48
@@ -121,6 +212,11 @@ function Camera.applyShot(shot,alpha,elapsed)
  if RunService:IsStudio() and (not reported[shot.name] or env.folder:GetAttribute("ValidateEveryFrame")) then
   reported[shot.name]=true
   local r=Camera.inspect(shot.name,subject,pos,focus,allowed)
+  -- A shot that had to be moved is a defect in the AUTHORED framing even when
+  -- the corrected position passes, so say so rather than reporting only the
+  -- position that was finally rendered.
+  r.corrected=corrected or false
+  r.authoredDistance=math.floor(offset.Magnitude*10)/10
   print("[OpeningCamera] "..game:GetService("HttpService"):JSONEncode(r))
   if not r.passed then warn("[OpeningCamera] FAILED: "..shot.name.." — inspect this frame in Studio") end
   env.folder:SetAttribute("LastCameraPassed",r.passed)

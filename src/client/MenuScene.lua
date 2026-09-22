@@ -53,7 +53,12 @@ local MenuScene = {}
 local ORIGIN = Vector3.new(0, 3000, 0)
 local MECHA_AT = ORIGIN + Vector3.new(5, 0, -3)
 local MECHA_FACING = Vector3.new(-0.3, 0, -1) -- angled slightly toward the doorway, not square-on
-local DOORWAY_AT = ORIGIN + Vector3.new(5, 0, -21)
+-- Four studs right of the mecha's own X, so the OPENING (not just the wall it
+-- is cut into) sits behind the machine from the desktop lens. Measured off the
+-- built set: the gap now spans -1% to +15 studs where the mecha stands at
+-- -1..+11, so the whole silhouette is against sky rather than half of it
+-- against the dark right-hand wall panel.
+local DOORWAY_AT = ORIGIN + Vector3.new(9, 0, -21)
 
 --[[
 	THE SHOT, as one constant, because the foreground layer only exists
@@ -74,8 +79,39 @@ local DOORWAY_AT = ORIGIN + Vector3.new(5, 0, -21)
 ]]
 local FOV_DESKTOP = 34
 local FOV_COMPACT = 44
-local DESKTOP_EYE = MECHA_AT + Vector3.new(-9, 6.6, 22)
-local DESKTOP_TARGET = MECHA_AT + Vector3.new(-3.4, 5.4, 0)
+--[[
+	Framed for a mecha that STANDS ON THE FLOOR and is about thirteen studs
+	tall (R15 at Config.Aegis.Scale). The previous eye/target pair was set
+	against the eight-stud placeholder, so once the real rig arrived its head
+	was cropped by the top edge: at 22.8 studs and a 34-degree lens the visible
+	band was roughly -1.6 to +12.4 studs, and the rig runs 0 to 13.
+
+	At 34.6 studs the visible band is about 21 studs tall, so the machine uses
+	roughly three fifths of the frame height with air above and below it - a
+	poster, not a close-up. The look point is six studs to its left, which puts
+	the whole machine in the right half of the frame and leaves the left to the
+	title column and the dark foreground.
+
+	Both numbers are checked by tools/scenecheck's framing report rather than
+	by eye, and the placeholder in buildPlaceholder is sized to the real rig so
+	that report is measuring something honest.
+]]
+--[[
+	The lens sits nearly square behind the machine on purpose.
+
+	The composition asks for the mecha to be SILHOUETTED against the open
+	hangar door (that is what the rim light through the doorway is for), and
+	the doorway stands eighteen studs directly behind it. From twelve studs off
+	to the side that opening projected well to the mecha's left, so the bright
+	background landed beside the subject and the machine's head was dark blue
+	against a dark ceiling - unreadable, which is exactly the separation
+	problem this shot is supposed to solve.
+
+	The mecha still sits right of centre; that is done with the look TARGET
+	below, not by swinging the eye, so the doorway stays behind it.
+]]
+local DESKTOP_EYE = MECHA_AT + Vector3.new(-3.5, 9.2, 34)
+local DESKTOP_TARGET = MECHA_AT + Vector3.new(-6, 6.6, 0)
 local DESKTOP_FRAME = CFrame.lookAt(DESKTOP_EYE, DESKTOP_TARGET)
 -- Half-frame at a given distance, in studs, for the desktop lens. 16:9 is the
 -- reference aspect; a wider viewport only reveals more to the sides, so an
@@ -160,12 +196,12 @@ local function buildBackground()
 
 	-- Back wall with a doorway cut from two side panels (never a solid slab
 	-- with an unexplained hole - the opening reads as a real gap).
-	part("WallLeft", CFrame.new(ORIGIN.X - 12, wallY, ORIGIN.Z - 21), Vector3.new(14, 16, 1), HANGAR_METAL)
-	part("WallRight", CFrame.new(ORIGIN.X + 16, wallY, ORIGIN.Z - 21), Vector3.new(10, 16, 1), HANGAR_METAL)
-	part("WallLintel", CFrame.new(ORIGIN.X + 5, wallY + 6.5, ORIGIN.Z - 21), Vector3.new(18, 3, 1), HANGAR_METAL_DARK)
+	part("WallLeft", CFrame.new(ORIGIN.X - 8, wallY, ORIGIN.Z - 21), Vector3.new(14, 16, 1), HANGAR_METAL)
+	part("WallRight", CFrame.new(ORIGIN.X + 20, wallY, ORIGIN.Z - 21), Vector3.new(10, 16, 1), HANGAR_METAL)
+	part("WallLintel", CFrame.new(ORIGIN.X + 9, wallY + 6.5, ORIGIN.Z - 21), Vector3.new(18, 3, 1), HANGAR_METAL_DARK)
 	-- Door leaves parked open against the jambs: the opening is explained.
 	for _, side in { -1, 1 } do
-		part("DoorLeaf", CFrame.new(ORIGIN.X + 5 + side * 8.6, wallY - 1, ORIGIN.Z - 20.2), Vector3.new(1.4, 13, 1.6), HANGAR_METAL_DARK, Enum.Material.DiamondPlate)
+		part("DoorLeaf", CFrame.new(ORIGIN.X + 9 + side * 8.6, wallY - 1, ORIGIN.Z - 20.2), Vector3.new(1.4, 13, 1.6), HANGAR_METAL_DARK, Enum.Material.DiamondPlate)
 	end
 
 	-- Exterior, in three pale layers. Each is further, larger, paler and more
@@ -214,12 +250,15 @@ local function buildBackground()
 	-- The RIM light: a cold spot standing just outside the doorway, aimed
 	-- back into the bay. This is what draws a bright edge down the mecha's
 	-- silhouette and stops it merging into the dark rear wall.
-	local rimHost = part("DoorwayRimSource", CFrame.new(DOORWAY_AT + Vector3.new(-1, 9, -3)), Vector3.new(0.4, 0.4, 0.4), RIM_COLD, Enum.Material.Neon, 1)
+	-- Raised to the new mecha's shoulder line for the same reason as the key:
+	-- a rim aimed at the waist of a thirteen-stud machine draws an edge on its
+	-- legs and nothing on the part of it the audience is looking at.
+	local rimHost = part("DoorwayRimSource", CFrame.new(DOORWAY_AT + Vector3.new(-1, 13, -3)), Vector3.new(0.4, 0.4, 0.4), RIM_COLD, Enum.Material.Neon, 1)
 	rimHost.CastShadow = false
 	local rim = Instance.new("SpotLight")
 	rim.Color = RIM_COLD
-	rim.Brightness = 2.6
-	rim.Range = 44
+	rim.Brightness = 3.1
+	rim.Range = 56
 	rim.Angle = 62
 	rim.Face = Enum.NormalId.Back -- +Z, i.e. back toward the mecha
 	rim.Parent = rimHost
@@ -308,12 +347,15 @@ local function buildMidground()
 	-- The KEY light: one warm spot high on the right, aimed down and inward
 	-- at the mecha's chest. Everything readable about the midground comes
 	-- from this; it is the only bright light in the room.
-	local fixture = part("WorkLightFixture", CFrame.new(ORIGIN.X + 13, ORIGIN.Y + 13.6, ORIGIN.Z - 1) * CFrame.Angles(math.rad(-26), math.rad(22), 0), Vector3.new(1, 0.7, 1), HANGAR_METAL_DARK)
+	-- Raised, because the subject grew. This rig was hung for a mecha that was
+	-- (wrongly) about five studs tall; the real one is thirteen, and at the old
+	-- height the cone washed its chest and left the head in the dark.
+	local fixture = part("WorkLightFixture", CFrame.new(ORIGIN.X + 13, ORIGIN.Y + 17.5, ORIGIN.Z - 1) * CFrame.Angles(math.rad(-30), math.rad(22), 0), Vector3.new(1, 0.7, 1), HANGAR_METAL_DARK)
 	local spot = Instance.new("SpotLight")
 	spot.Color = KEY_WARM
 	spot.Brightness = 3.4
-	spot.Range = 34
-	spot.Angle = 52
+	spot.Range = 40
+	spot.Angle = 58
 	spot.Face = Enum.NormalId.Bottom
 	spot.Parent = fixture
 	workLightFixture = spot
@@ -381,21 +423,21 @@ local function buildForeground()
 	silhouette("GantryCollar", column * CFrame.new(0, -4.4, 0), Vector3.new(2.8, 0.7, 2.8))
 	-- Short, and kept out at the edge: a 7-stud brace reached to within a
 	-- fifth of the centre line and read as a bar across the shot.
-	silhouette("GantryBrace", column * CFrame.new(1.0, 2.8, -0.4) * CFrame.Angles(0, 0, math.rad(-34)), Vector3.new(0.55, 4.2, 0.55))
+	silhouette("GantryBrace", column * CFrame.new(1.0, -0.6, -0.4) * CFrame.Angles(0, 0, math.rad(-34)), Vector3.new(0.55, 4.2, 0.55))
 
 	-- BOTTOM LEFT: -141% to -43% laterally, top edge a little over halfway
 	-- down the lower half. One dark mass so the floor does not run to the
 	-- corner as an empty plane - deliberately short of the centre line.
-	local stack = standing(6.4, -3.3, 5)
-	silhouette("EquipmentCase", stack, Vector3.new(2.8, 5, 2.6), Enum.Material.DiamondPlate)
-	silhouette("EquipmentCaseLid", stack * CFrame.new(0, 2.7, 0) * CFrame.Angles(0, math.rad(6), 0), Vector3.new(3.1, 0.45, 2.9))
+	local stack = standing(7.2, -3.6, 8.2)
+	silhouette("EquipmentCase", stack, Vector3.new(3, 8.2, 2.8), Enum.Material.DiamondPlate)
+	silhouette("EquipmentCaseLid", stack * CFrame.new(0, 4.3, 0) * CFrame.Angles(0, math.rad(6), 0), Vector3.new(3.3, 0.45, 3.1))
 
 	-- RIGHT EDGE: +72% to +165%. Closes the composition on the side the mecha
 	-- stands on so it is contained rather than drifting out, and stops clear
 	-- of the mecha's own +43%.
-	local crates = standing(8.2, 5.4, 4.6)
-	silhouette("CrateStackLower", crates, Vector3.new(3.6, 4.6, 3.4))
-	silhouette("CrateStackUpper", crates * CFrame.new(-0.3, 3.1, 0.3) * CFrame.Angles(0, math.rad(9), 0), Vector3.new(3, 1.6, 2.9))
+	local crates = standing(8.2, 5.4, 7)
+	silhouette("CrateStackLower", crates, Vector3.new(3.6, 7, 3.4))
+	silhouette("CrateStackUpper", crates * CFrame.new(-0.3, 4.2, 0.3) * CFrame.Angles(0, math.rad(9), 0), Vector3.new(3, 1.6, 2.9))
 
 end
 
@@ -429,12 +471,17 @@ local function buildPlaceholder(): Model
 		p.CFrame = look * offset
 		p.Parent = model
 	end
-	box("Torso", CFrame.new(0, 5.6, 0), Vector3.new(3.6, 3.4, 2.4))
-	box("Head", CFrame.new(0, 8.3, -0.1), Vector3.new(1.6, 1.6, 1.6))
-	box("LegL", CFrame.new(-0.9, 2, 0), Vector3.new(1.3, 4, 1.5))
-	box("LegR", CFrame.new(0.9, 2, 0), Vector3.new(1.3, 4, 1.5))
-	box("ArmL", CFrame.new(-2.3, 5.2, 0), Vector3.new(1.1, 3.6, 1.2))
-	box("ArmR", CFrame.new(2.3, 5.2, 0), Vector3.new(1.1, 3.6, 1.2))
+	-- Proportioned to the REAL rig (R15 at Config.Aegis.Scale, about thirteen
+	-- studs standing), not to a convenient small box. The placeholder is on
+	-- screen for the first moments of every menu open and it is what the
+	-- offline framing harness measures, so a stand-in two-thirds the height of
+	-- the thing it stands in for makes both of those lie about the shot.
+	box("Torso", CFrame.new(0, 7.9, 0), Vector3.new(5, 4.8, 3.4))
+	box("Head", CFrame.new(0, 11.6, -0.14), Vector3.new(2.2, 2.2, 2.2))
+	box("LegL", CFrame.new(-1.25, 2.8, 0), Vector3.new(1.8, 5.6, 2.1))
+	box("LegR", CFrame.new(1.25, 2.8, 0), Vector3.new(1.8, 5.6, 2.1))
+	box("ArmL", CFrame.new(-3.2, 7.3, 0), Vector3.new(1.5, 5, 1.7))
+	box("ArmR", CFrame.new(3.2, 7.3, 0), Vector3.new(1.5, 5, 1.7))
 	model.PrimaryPart = model.Torso
 	model.Parent = folder
 	return model
@@ -481,21 +528,58 @@ local function upgradeMecha()
 		end
 
 		dummy.Name = "MenuAegis"
-		dummy:PivotTo(CFrame.lookAt(MECHA_AT, MECHA_AT + MECHA_FACING))
 		root.Anchored = true
 		humanoid.PlatformStand = true
 		humanoid.WalkSpeed = 0
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
-		-- Same scale + build order as the real transform sequence
-		-- (PlayerService.runTransform), so proportions match exactly.
-		for _, name in { "BodyDepthScale", "BodyHeightScale", "BodyWidthScale", "HeadScale" } do
-			local value = humanoid:FindFirstChild(name)
-			if value and value:IsA("NumberValue") then
-				value.Value = Config.Aegis.Scale
-			end
-		end
+		--[[
+			BUILD IT OFF SCREEN, THEN BRING IT IN.
+
+			The Humanoid only applies the four body-scale NumberValues once the
+			model is actually in the DataModel, so setting them on a model still
+			parented to nil - which is what this did - did nothing at all.
+			Measured in Studio: heightScale read 2.25 while every part was still
+			default R15 size, a 5.5-stud avatar wearing Aegis armour rather than
+			the 12-stud machine the shot is framed for. It went unnoticed because
+			the rig was ALSO being buried to the hips (see the standing fix
+			below), so only its chest was ever on screen.
+
+			So it is parented first, and parked four hundred studs under the bay
+			while it is assembled, because an unarmoured R15 dummy must never be
+			visible in the frame. The cheap placeholder stays up throughout and
+			is destroyed by the swap at the end of this function.
+		]]
+		dummy:PivotTo(CFrame.new(ORIGIN - Vector3.new(0, 400, 0)))
+		dummy.Parent = folder
+
+		--[[
+			Model:ScaleTo, not the Humanoid's four body-scale NumberValues.
+
+			The NumberValue route is what PlayerService.runTransform uses, and it
+			is right there: it runs on a real player character that is already in
+			Workspace, unanchored, and owned by the Humanoid's own scaling pass.
+			None of that is true of a display dummy, and measured in Studio the
+			values read back as 2.25 while every part stayed default R15 size -
+			parenting it first and giving it a frame did not change that.
+
+			ScaleTo is the supported, synchronous model-scaling API: it resizes
+			parts, joint offsets and attachments in one call, with no dependency
+			on parenting, anchoring or a later engine pass, which is exactly what
+			a rig that is about to have armour measured off it needs. Automatic
+			scaling is turned off first so the Humanoid cannot undo it.
+		]]
+		humanoid.AutomaticScalingEnabled = false
+		dummy:ScaleTo(Config.Aegis.Scale)
 		AegisRig.applyUnderlayer(dummy)
+		-- One frame for the rig to resize before the plates are measured off it.
+		-- PlayerService.runTransform takes exactly this wait, for exactly this
+		-- reason; without it the armour is sized against the pre-scale limbs.
+		task.wait()
+		if not visible or not folder or dummy.Parent ~= folder then
+			dummy:Destroy() -- menu was hidden while the rig was being built
+			return
+		end
 		for _, group in AegisRig.Groups do
 			AegisRig.buildGroup(dummy, humanoid, group)
 		end
@@ -511,8 +595,30 @@ local function upgradeMecha()
 		end
 
 		poseAegisIdle(dummy)
-		dummy.Parent = folder
 
+		-- Onto its mark, now that it is the size it is supposed to be.
+		dummy:PivotTo(CFrame.lookAt(MECHA_AT, MECHA_AT + MECHA_FACING))
+
+		--[[
+			STAND IT ON THE FLOOR.
+
+			Model:PivotTo places an R15 model by its HumanoidRootPart, and that
+			part sits at the HIP, not at the feet - so pivoting it to MECHA_AT
+			(which is at bay-floor height) buried everything below the waist.
+			At Config.Aegis.Scale that is about six and a half studs of leg
+			under the floor, which is exactly why the welcome screen read as a
+			torso and a head with no machine under them.
+
+			Measured off the built rig rather than assumed, after the armour
+			groups are on, so changing the scale or the armour can never
+			silently start sinking it again.
+		]]
+		local box, extent = dummy:GetBoundingBox()
+		local lowest = box.Position.Y - extent.Y / 2
+		dummy:PivotTo(dummy:GetPivot() + Vector3.new(0, ORIGIN.Y - lowest, 0))
+
+		-- Already parented (it had to be, to be scaled); the placeholder goes
+		-- now that the real rig is standing where the shot expects it.
 		local old = mechaDummy
 		mechaDummy = dummy
 		if old and old.Parent then
@@ -730,7 +836,12 @@ function MenuScene.show()
 		newFolder.Parent = workspace
 		folder = newFolder
 		buildHangar()
-		buildPlaceholder()
+		-- Kept in `mechaDummy` rather than discarded: upgradeMecha swaps that
+		-- reference and destroys whatever was there, so throwing the return
+		-- value away left the cheap placeholder parented inside the real rig
+		-- for the whole session - two overlapping mechas, and a permanently
+		-- leaked model on every menu open.
+		mechaDummy = buildPlaceholder()
 		task.spawn(upgradeMecha)
 	end
 
@@ -738,8 +849,14 @@ function MenuScene.show()
 	startCorePulse()
 	startWorkLightSweep()
 
-	table.insert(connections, RunService.RenderStepped:Connect(function(dt)
-		MenuScene.driveCamera(dt)
+	-- One connection for the whole menu scene, on PreRender (the current name
+	-- for the pre-render step; RenderStepped is deprecated). Both callbacks are
+	-- deliberately tiny - a camera CFrame and a handful of joint transforms -
+	-- because the renderer blocks on this step. Nothing here allocates,
+	-- searches the DataModel or creates instances; the scene is fully built
+	-- before the connection is made, and MenuScene.hide disconnects it.
+	table.insert(connections, RunService.PreRender:Connect(function(deltaTime: number)
+		MenuScene.driveCamera(deltaTime)
 		heartbeat()
 	end))
 end

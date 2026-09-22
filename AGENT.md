@@ -1244,18 +1244,159 @@ and camera work above is what this session had evidence for. The Guardian and
 Sovereign rigs (still the standing "reads as primitive blocks" gap). Audio.
 Anything in Chapter One's own scenes 2-9.
 
+## 2026-09-22 session: welcome page + Arctic arrival + command room, IN STUDIO
+
+The first session in this file whose claims were checked by watching the game
+run. **Roblox Studio was driven directly** (Vinegar on the live `:1` session,
+Rojo live-sync, XTEST for input, `grim` for capture), so every "fixed" below
+means a rendered frame was looked at, not only that a harness passed. Scope was
+fixed in advance at: welcome page -> Start Game -> Arctic convoy arrival -> base
+reveal -> the first Lyra/Voss/Hale command-room conversation, and nothing past it.
+
+**The correction that matters most for future sessions: this file has been
+saying "not verified in a real Studio session" for a year, and the things that
+were wrong were wrong in ways no harness here could have caught.** `castcheck`
+was passing 48,422 checks and `scenecheck` was rendering clean frames while the
+command-room cast was physically flying out of the room.
+
+### Six bugs found by watching it, with the measurement that identified each
+
+1. **Every cinematic human drifted and tumbled out of the set.** Measured: the
+   leads' roots went from y=3 to y=30 (Hale) and y=-9 (Lyra) over one
+   conversation, with `up` passing through zero - upside down - while
+   `Anchored=true` and `AssemblyLinearVelocity=0`. Not simulation, then. Cause:
+   `Kit.joint`/`Kit.weld` unanchor their Part1, so a rig was one physics
+   assembly, and `Cast.evaluate` writes member CFrames directly - which in
+   Roblox moves the WHOLE assembly, compounding every joint, every frame. Fix:
+   rig parts are anchored (`Cast.lua`'s `joint`/`attach`) and `evaluate` now
+   also drives the welded decoration from `r.rigid`, which was already being
+   recorded and never read. This is the single fix behind "General Hale
+   delivering his first line while lying on his side in the snow".
+2. **A constant 0.25-stud float on every character**, which the existing
+   validator had been reporting 152 times a run into a log nobody read. The
+   foot-grounding correction was being eased through `Cast.evaluate`'s 0.22
+   pose blend; since moving the pelvis by x moves both soles by x, that settles
+   at a fixed point of exactly HALF the gap and never closes. Grounding is a
+   constraint, so it now bypasses the blend (`r.applied.Root=nil`).
+3. **The menu mecha had never been at Aegis scale.** `heightScale` read 2.25
+   while every part was default R15 size: the Humanoid only applies its four
+   body-scale NumberValues once the model is in the DataModel, and
+   `upgradeMecha` set them on a nil-parented model. It also placed the model
+   with `PivotTo`, which positions an R15 rig by its HIP, burying six studs of
+   leg under the bay floor - and only the chest was ever on screen, which is
+   why a 5-stud avatar passed for a mecha. Fixed with `Model:ScaleTo` (the
+   supported, synchronous API, which needs none of that) plus a measured
+   stand-on-the-floor lift. `buildPlaceholder`'s model was also never destroyed
+   - its return value was discarded, so two mechas overlapped and one leaked on
+   every menu open.
+4. **Four command-room shots were playing at 1.4-1.5 studs instead of their
+   authored 6.8-8.2.** The signal display sat six studs from a cast that all
+   face it, so every reverse angle was taken from behind the screen, and the
+   unstick fallback - which only tried positions along the same blocked line -
+   gave up at 1.5 studs from a face. The panel moved back to z=-9.2, and the
+   fallback now ORBITS or RISES at the authored distance before it will give up
+   any of it.
+5. **The correction re-decided every frame**, so a shot could report a clean
+   orbit on frame 1 and render a second later as a head filling half the
+   screen, because a listener's breathing had moved the margin. Corrections are
+   now held for the whole take, and a mid-shot correction or collapse WARNS -
+   the per-shot report only ever printed a shot's first frame, which is how all
+   of this stayed invisible. That new warning immediately caught two more:
+   `04_GateArrival` collapsing as the truck crossed the lens, and
+   `06_ThreePulses` swinging away from its own pulse bars. Both are now
+   declared `foreground`, a concept `Camera.lua` already had and `add` did not
+   expose.
+6. **The signal display's readout was on its back.** The panel is built with no
+   yaw, so its local -Z - which is what Roblox calls Front, and what
+   `Kit.label` defaults to - faces away from the room. The three pulse bars and
+   the printed marking were both on the far side, and the shot that exists to
+   show the returning signal rendered as a blank blue sheet.
+
+### Also done, all visually confirmed
+
+- **Frame-rate independence** (`VehicleMotion.lua`, new, `--!strict`, with real
+  `VehicleHandle`/`WheelHandle` types). `speed = distance * 60` and a fixed
+  0.18-per-frame suspension blend are gone; both now take the real delta, which
+  is threaded from `Opening.lua`'s loop through `shot.update` to
+  `Env.moveVehicle`. Wheel spin stays distance-derived - it was already correct
+  and already frame-rate independent, and was deliberately left alone.
+- **`RunService.RenderStepped` -> `PreRender`** in `Opening.lua` and
+  `MenuScene.lua` (still exactly one connection for the whole menu scene).
+  `CutsceneRunner.lua` was left alone: it belongs to Scenes 2/4/9, which are out
+  of scope.
+- **The wheel face** rebuilt from ten bright arms to five radial spokes, a small
+  hub and one hi-vis timing mark, so rotation is unambiguous in a still frame.
+  The fake `HeadlampPool` Neon slab - a hard-edged glowing rectangle rigid to
+  the hull - is gone; the real SpotLight already did the job.
+- **02_ArcticEstablishing** lowered from 115 studs/24 degrees to 72/10, which is
+  what stops it reading as a tabletop; **03_ConvoyTracking** given a nine-stud
+  fall-back so the truck visibly pulls away from a lens that used to be welded
+  to it; **01_BlackRadio** now lifts out of black onto the convoy's headlamps
+  instead of holding five seconds of dead frame.
+- **Acting**: gesture amplitude is now a character trait (`GESTURE_RESTRAINT`,
+  Hale at 0.3), and the Scan/CheckingTablet pose brings the hands in over the
+  console instead of presenting them on a tray.
+- **The welcome page** reframed to 34.6 studs with the doorway shifted behind
+  the machine, the key and rim raised to the subject's real height, and the
+  foreground masses re-placed to crop the edges again.
+
+### Verification
+
+`./tools/check.sh` clean (and the one pre-existing lint warning fixed);
+`./tools/castcheck/run.sh` 48,422 checks, 0 failures;
+`./tools/phase0a/offline/run.sh` all pass; `rojo build` produces a place. In
+Studio, at the end of the pass: **17/17 in-scope shots play exactly as authored
+(distance == authoredDistance, no correction), 0 mid-shot corrections or
+collapses, 0 `[ActorValidation]` warnings.** Before/after frames and the numbers
+are in `docs/visual-rebuild/2026-09-22-opening-pass/`.
+
+### Tooling corrected, because it had been lying
+
+- `tools/scenecheck/render.py` drew a 93%-transparent part as an opaque wash of
+  background colour, so the menu's ground haze was ERASING the mecha's legs in
+  the offline render while being invisible in Studio. A tool that invents
+  occlusion is worse than no tool; parts above 0.6 transparency are now skipped.
+- The Roblox shim knew only `RenderStepped`, so it broke the moment a module was
+  modernised. It now knows `PreRender`/`PreSimulation`/`PostSimulation` too, and
+  `CFrame.fromAxisAngle`.
+- `buildPlaceholder` was two-thirds the height of the rig it stands in for, so
+  the offline framing report was measuring the wrong object. It is now
+  proportioned to the real thing.
+
+### `Model:PivotTo` was suspected, measured, and cleared
+
+`tools/pivotcheck/` settles the assumption `Kit.rigid` was built on. Driving a
+25-part truck-shaped model for 4000 frames of translation plus three-axis
+rotation: `PivotTo` and `Kit.rigid` drift **identically**, 0.000009 studs, basis
+scale 1.00000004. The residual is float32 quantisation, the same for both, not
+accumulation. `Kit.rigid` was deliberately NOT removed - it is not wrong and
+every vehicle shot is currently verified against it - but new code is free to
+use the supported pivot APIs. See that folder's README.
+
+### Deliberately not touched
+
+Anything past "Begin drilling." Phase 0.B, and the migration of the cinematic
+onto `src/shared/Human/` (Phase 0.A still awaits approval). The Aegis and
+Sovereign rig DESIGNS - the long-standing "reads as primitive blocks" gap - are
+untouched; this pass fixed how they are placed, scaled, lit and framed, not what
+they look like. `07e_SkippingClock` has the same behind-the-display camera bug
+`06_ThreePulses` had, and the excavation workers' `CarryCase`/`OperateDrill`
+poses lean the torso far enough to trip the validator; both are outside this
+scope and are left reported rather than fixed.
+
 ## Known gaps / good next increments (roughly priority order)
 
-0. **A real Studio playtest, specifically of LIGHTING.** As of 2026-09-22 the
-   project can check its own geometry (`tools/castcheck`) and look at its own
-   framing (`tools/scenecheck`), and both are clean. Neither can see a light.
-   So the open questions are now almost entirely lighting questions: does the
-   command room read without any face clipping to white; does the Arctic
-   exposure hold the snow and the practicals at once; does the menu hangar's
-   key/rim pair actually separate the mecha from the doorway; do the prison's
-   new work lamps keep faces readable against the violet cavern. Also worth
-   watching for their own sake: the cinematic playing end to end without
-   erroring, and the full Start Game -> bedroom spawn -> Daren flow.
+0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
+   session drove Studio directly and cleared welcome page -> Arctic arrival ->
+   base reveal -> the first command-room conversation; that stretch is verified
+   by rendered frames, not by harness alone. Everything from "Begin drilling."
+   onward has still only ever been reasoned about, and the six bugs that pass
+   found (see its entry) were all invisible to `castcheck` and `scenecheck` -
+   so assume the later scenes carry the same class of defect until somebody
+   watches them. Known specifics already reported and not fixed:
+   `07e_SkippingClock` has the behind-the-display camera bug, and the
+   excavation workers' `CarryCase`/`OperateDrill` poses trip the upright
+   validator. Also unwatched: the full Start Game -> bedroom spawn -> Daren flow.
 
 1. **An actual Studio playtest of the full chapter, start to finish.** See
    above - nothing in this session was verified any other way.
@@ -1292,10 +1433,18 @@ Anything in Chapter One's own scenes 2-9.
   progression. The client renders and requests; every remote is validated
   and rate-limited (`RateLimiter.lua`, `Config.Limits`).
 - `Palette.Quality.Seed` fixes world generation — it must stay deterministic.
-- Roblox Studio is NOT driven from this container (Vinegar is installed - see
-  the 2026-09-21 entry - but using it means taking over the user's desktop;
-  ask first). What exists instead, and should be run rather than reasoned
-  around:
+- **Roblox Studio CAN be driven from here, and as of 2026-09-22 has been.**
+  Vinegar launches it on the user's live `:1` session; `rojo serve` plus the
+  Rojo Studio plugin live-syncs the working tree into an open place; XTEST via
+  `python-xlib` sends input; `grim` captures. **Ask first** - it takes over the
+  user's only display - and never capture a frame without confirming Roblox
+  Studio is the focused window, or you will screenshot whatever they are
+  actually doing. Studio writes every `print`/`warn` to
+  `~/.local/share/vinegar/appdata/Roblox/logs/`, which is far better than
+  reading the Output panel off a screenshot: `[OpeningCamera]` and
+  `[ActorValidation]` are already instrumented for exactly this.
+  The offline harnesses are still the fast loop, and should be run rather than
+  reasoned around - but they are not the acceptance test:
     * `./tools/check.sh` - type-check and lint.
     * `./tools/castcheck/run.sh` - the North Pole cinematic's geometry, rig,
       placement, framing-as-authored, subtitle and albedo checks, against the
@@ -1303,6 +1452,6 @@ Anything in Chapter One's own scenes 2-9.
     * `./tools/phase0a/offline/run.sh` - the `src/shared/Human` rig maths.
     * `./tools/scenecheck/run.sh` - renders the welcome screen and the
       opening's own shots, plus a report of where everything lands in frame.
-  Every claim of "this works" must still be qualified as "this checks out and
-  was looked at offline," never "this plays correctly," unless the user
-  reports back from an actual Studio session. Nothing here can see a light.
+  Nothing in that list can see a light, and none of it caught any of the six
+  bugs the 2026-09-22 Studio pass found. Qualify a claim as "checks out and was
+  looked at offline" unless you actually watched it run.

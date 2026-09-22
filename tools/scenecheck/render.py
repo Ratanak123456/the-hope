@@ -137,6 +137,11 @@ def draw_round(canvas, cam, part, background, axis):
         draw_box(canvas, cam, spun, background, shrink=0.93 if step else 1.0)
 
 
+# Above this transparency a part is treated as air by the rasteriser. Roblox
+# still draws it, faintly; what it does NOT do is hide what is behind it.
+SEE_THROUGH = 0.6
+
+
 def render(capture, path, label):
     background = (72, 82, 96)
     canvas = base.Canvas(W, H, background)
@@ -146,6 +151,13 @@ def render(capture, path, label):
     parts = sorted(capture["parts"],
                    key=lambda p: -sum((a - b) ** 2 for a, b in zip(p["p"], capture["eye"])))
     for part in parts:
+        # A part this transparent cannot hide anything, and drawing it as an
+        # opaque wash of background colour makes it ACT like an occluder in the
+        # image: the menu's 93%-transparent ground haze was erasing the mecha's
+        # legs here while being invisible in Studio. A tool that invents
+        # occlusion is worse than no tool, so these are skipped outright.
+        if part.get("t", 0) >= SEE_THROUGH:
+            continue
         kind = part.get("k", "Block")
         if kind == "Wedge":
             draw_wedge(canvas, cam, part, background)

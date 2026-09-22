@@ -19,6 +19,20 @@ local IS_STUDIO=RunService:IsStudio()
 -- Phases where a human is intentionally not upright. Anything else that
 -- shows up leaning past the check below is a real bug, not a choice.
 local NON_UPRIGHT_PHASES={Brace=true,Stumble=true,Flinch=true,Help=true}
+-- How much of the speaking gesture each lead actually uses. See the Speak
+-- branch in stepAnimate; anyone not listed keeps the full amplitude.
+local GESTURE_RESTRAINT={Hale=0.3,Voss=0.65,Soldier=0.4}
+--[[
+ How far from vertical an ORDINARY standing/talking torso may be before the
+ Studio validator calls it a defect.
+
+ The authored idle and listen poses lean the waist by at most about 12
+ degrees, and a deliberate reaction (Brace, Stumble, Flinch, Help) is exempt
+ above, so this is a genuine envelope rather than a threshold picked to keep
+ the log quiet. It used to be an unnamed `up<0.9`, i.e. nearly 26 degrees -
+ loose enough that a visibly hunched character passed.
+]]
+local MAX_UPRIGHT_DEGREES=16
 local uprightWarned={}
 -- Small named additive poses. Locomotion, gaze and reactions layer on top.
 --[[
@@ -75,15 +89,35 @@ local function rig(parent,name,cf)
  Instance.new("Animator").Parent=controller
  return {model=m,root=root,joints={},order={},rigid={},rest={},poses={},applied={},target={},eyes={},clock=0,scale=1,expression="Focused",blend=0.22}
 end
+--[[
+ A decoration rigidly fixed to `host` (hair, collar, belt, a rifle). The
+ WeldConstraint is kept so the part reads as attached in the explorer and so
+ anything that reparents a rig still moves as one piece, but the part is
+ re-ANCHORED afterwards and its world CFrame is driven explicitly from
+ `r.rigid` in Cast.evaluate. See the note there for why nothing in a
+ cinematic rig may be left unanchored.
+]]
 local function attach(r,host,name,size,offset,color,kind,material)
  local p=shape(r.model,name,size,host.CFrame*offset,color,kind,material)
  Kit.weld(host,p)
+ p.Anchored=true
  table.insert(r.rigid,{part=p,host=host,offset=offset})
  return p
 end
 local function joint(r,host,name,jointName,size,offset,pivot,color,kind,material)
  local p=shape(r.model,name,size,host.CFrame*offset*pivot:Inverse(),color,kind,material)
  local m=Kit.joint(jointName,host,p,offset,pivot)
+ -- Kit.joint unanchors its Part1, because that is what a PHYSICALLY jointed
+ -- rig needs. This rig is not one: Cast.evaluate solves the whole chain in
+ -- script and writes world CFrames itself, so the part is re-anchored here.
+ -- Leaving it unanchored made every rig share one physics assembly, and
+ -- writing a member's CFrame moves the WHOLE assembly - so each joint write
+ -- dragged the rig (root included) a little further every frame. Measured in
+ -- Studio: the command-room leads climbed from y=3 to y=30 and tumbled past
+ -- upside down over one conversation, with zero velocity and an anchored
+ -- root, which is exactly the signature of assembly dragging rather than
+ -- simulation.
+ p.Anchored=true
  r.joints[jointName]=m;r.rest[jointName]=offset
  table.insert(r.order,m)
  return p
@@ -207,6 +241,20 @@ function Cast.floorUnder(r,x: number,z: number,expected: number): number
  return expected
 end
 
+--[[
+ Solve the whole rig, in one pass, from the root outwards.
+
+ `r.order` is in creation order, which is parent-before-child, so every
+ Part0 below has already been placed this call. Every part in the rig is
+ ANCHORED (see `joint`/`attach`), which is what makes writing world CFrames
+ here safe: on an unanchored, jointed rig Roblox treats each part as a member
+ of one physics assembly and moving a member moves the assembly, so a
+ per-joint CFrame write silently transports the entire character.
+
+ `m.Transform` is still written so the joint's own state matches what was
+ rendered - anything inspecting the rig in Studio, and Cast.evaluate's own
+ blend on the next call, reads the same value the frame actually used.
+]]
 function Cast.evaluate(r)
  for _,m in r.order do
   -- Preserve authored C0/C1. Transform is the additive performance layer,
@@ -219,6 +267,12 @@ function Cast.evaluate(r)
   r.applied[m.Name]=value
   m.Transform=value
   m.Part1.CFrame=m.Part0.CFrame*m.C0*value*m.C1:Inverse()
+ end
+ -- Welded decoration follows its host explicitly, for the same reason: an
+ -- anchored host cannot drag an anchored child, and a WeldConstraint between
+ -- two anchored parts does nothing. Creation order is parent-first here too.
+ for _,entry in r.rigid do
+  entry.part.CFrame=entry.host.CFrame*entry.offset
  end
 end
 function Cast.pose(r,name,cf)
@@ -533,9 +587,18 @@ function Cast.stepAnimate(r,now)
  -- Working and acting phases. Arms come FORWARD on positive shoulder/elbow
  -- values; every one of these used to be negative, which swung the hands
  -- behind the back and dragged the forearms through the torso.
+ --[[
+  Working at the island: less shoulder, MORE elbow. The old values raised the
+  upper arm 29 degrees and bent the elbow only 60, which puts the hand a whole
+  forearm out in front of the chest - rendered, that is not somebody reading a
+  tablet, it is somebody holding out a tray, and at this rig's arm length it
+  was the most conspicuous thing in the command room. Dropping the shoulder
+  and closing the elbow brings the hands back over the console where the work
+  is, and the silhouette reads as attention rather than presentation.
+ ]]
  if phase=="Scan" or phase=="Operate" or phase=="ClearIce" or phase=="CheckingTablet" then
-  r.poses.LeftShoulder=A(0.5,0,-0.15);r.poses.LeftElbow=A(1.05,0,0)
-  r.poses.RightShoulder=A(0.4,0,0.1);r.poses.RightElbow=A(0.7+(phase=="ClearIce" and math.sin(now*2)*0.15 or 0),0,0)
+  r.poses.LeftShoulder=A(0.32,0,-0.14);r.poses.LeftElbow=A(1.34,0,0)
+  r.poses.RightShoulder=A(0.24,0,0.1);r.poses.RightElbow=A(1.02+(phase=="ClearIce" and math.sin(now*2)*0.15 or 0),0,0)
  elseif phase=="TypingConsole" or phase=="WritingNotes" then
   local tap=math.sin(now*7+seed)*0.08
   r.poses.LeftShoulder=A(0.6+tap,0,-0.12);r.poses.LeftElbow=A(1,0,0)
@@ -565,7 +628,17 @@ function Cast.stepAnimate(r,now)
    broken rig, not as emphasis.
   ]]
   local t=now-(r.lineStart or now)
-  local emphasis=0.06+math.sin(t*2.1)*0.09+math.sin(t*3.3+1.1)*0.05
+  --[[
+   Scaled by WHO is talking, because "restrained" is not one number for
+   everyone in the room. Hale is the ranking officer: his lines are orders
+   and questions, and an officer who gestures through them reads as a third
+   scientist rather than as the authority. At 0.3 his hand still lives, but
+   the delivery is carried almost entirely by stillness and where he looks.
+   Voss is analytical and controlled; Lyra, who is the one actually working
+   the problem, keeps the full (already small) amplitude.
+  ]]
+  local restraint=GESTURE_RESTRAINT[r.kind] or 1
+  local emphasis=(0.06+math.sin(t*2.1)*0.09+math.sin(t*3.3+1.1)*0.05)*restraint
   r.poses.RightShoulder=A(0.18+emphasis,0,0.09+(phase=="Warning" and 0.1 or 0));r.poses.RightElbow=A(0.7+emphasis,0,0)
   r.poses.LeftShoulder=A(0.1,0,-0.07);r.poses.LeftElbow=A(0.5,0,0)
  elseif phase=="Authority" then
@@ -633,6 +706,20 @@ function Cast.stepAnimate(r,now)
   local lift=Cast.footCorrection(r)
   if math.abs(lift)>0.002 then
    r.poses.Root=CF(0,lift,0)*(r.poses.Root or CF())
+   --[[
+    Grounding is a CONSTRAINT, not a performance beat, so it is written
+    straight into the applied state instead of being eased toward like a pose.
+
+    Clearing r.applied.Root makes the next evaluate take this target exactly
+    (see the alpha there). Easing it was a real, measurable bug: moving the
+    pelvis by x moves both soles by x, so with a 22% blend the correction
+    settles at a fixed point where the remaining error is exactly HALF the
+    original gap and never closes. Studio reported it every frame, on every
+    character, at a stubbornly constant value - "both feet off the floor by
+    0.25 studs" - which is the arithmetic signature of that half, not of a
+    bad pose.
+   ]]
+   r.applied.Root=nil
    Cast.evaluate(r)
   end
  end
@@ -654,7 +741,8 @@ function Cast.stepAnimate(r,now)
   ]]
   local problem=nil
   local up=r.torso.CFrame.UpVector:Dot(V(0,1,0))
-  if up<0.9 then problem=`torso UpVector.Y={string.format("%.2f",up)}` end
+  local lean=math.deg(math.acos(math.clamp(up,-1,1)))
+  if lean>MAX_UPRIGHT_DEGREES then problem=`leaning {string.format("%.1f",lean)} degrees` end
   local left=r.model:FindFirstChild("LeftFoot")
   local right=r.model:FindFirstChild("RightFoot")
   local pelvis=r.model:FindFirstChild("LowerTorso")
@@ -674,7 +762,18 @@ function Cast.stepAnimate(r,now)
   end
   if problem then
    if not uprightWarned[r] then
-    warn(`[ActorValidation] {r.model.Name} is not standing correctly: {problem} (phase={phase})`)
+    --[[
+     Everything needed to FIND the fault, in one line: who, what phase they
+     were in when it happened, how far from upright they actually are, how
+     far their soles are from the floor this character was placed on, and
+     where their root is in the world so it can be typed straight into the
+     Studio command bar. A warning that only says "not standing correctly"
+     costs a whole extra session to act on.
+    ]]
+    local sole=left and right and math.min(left.Position.Y-left.Size.Y/2,right.Position.Y-right.Size.Y/2) or nil
+    local gap=(sole and r.floorY) and string.format("%.2f",sole-r.floorY) or "n/a"
+    local at=r.root.Position
+    warn(`[ActorValidation] {r.model.Name}: {problem} (phase={phase}, lean={string.format("%.1f",lean)}deg, feet {gap} above floor, root {string.format("%.1f, %.1f, %.1f",at.X,at.Y,at.Z)})`)
    end
    uprightWarned[r]=true
   else

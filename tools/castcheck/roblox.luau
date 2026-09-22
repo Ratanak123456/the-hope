@@ -327,9 +327,16 @@ for _,name in {"HopeBloom","HopeSunRays","HopeAtmosphere","HopeGrade"} do
 end
 local services={
  RunService={IsStudio=function() return R.studio end,IsClient=function() return true end,IsServer=function() return false end,
-  RenderStepped={Connect=function() return {Disconnect=function() end} end},
-  Heartbeat={Connect=function() return {Disconnect=function() end} end},
-  Stepped={Connect=function() return {Disconnect=function() end} end}},
+  -- PreRender/PreSimulation/PostSimulation are the current names; the three
+  -- legacy aliases are kept because modules this harness does not own still
+  -- use them. A shim that only knows the deprecated names silently fails the
+  -- moment a module is modernised, which is how it should NOT find out.
+  PreRender={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  PreSimulation={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  PostSimulation={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  RenderStepped={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  Heartbeat={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end},
+  Stepped={Connect=function() return {Disconnect=function() end} end,Wait=function() return 1/60 end}},
  ReplicatedStorage=nil,
  TweenService={Create=function() return {Play=function() end,Cancel=function() end,Completed={Connect=function() return {Disconnect=function() end} end}} end},
  Lighting=lighting,

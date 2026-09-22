@@ -12,8 +12,9 @@ root = here.parent.parent
 castcheck = root / "tools/castcheck"
 
 SETS = {
-    "opening": (["Signal", "Config", "Palette", "Settings", "Kit", "Env", "Cast",
-                 "Lighting", "PerformanceDirector", "Camera", "Sequences"], "dump.luau"),
+    "opening": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
+                 "Env", "Cast", "Lighting", "PerformanceDirector", "Camera",
+                 "Sequences"], "dump.luau"),
     "menu": (["Signal", "Config", "Palette", "AegisRig", "Responsive", "Settings",
               "MenuScene"], "menu.luau"),
 }
@@ -26,6 +27,7 @@ PATHS = {
     "Lighting": "src/client/NorthPole/Lighting.lua",
     "PerformanceDirector": "src/client/NorthPole/PerformanceDirector.lua",
     "Camera": "src/client/NorthPole/Camera.lua",
+    "VehicleMotion": "src/client/NorthPole/VehicleMotion.lua",
     "Sequences": "src/client/NorthPole/Sequences.lua",
 }
 

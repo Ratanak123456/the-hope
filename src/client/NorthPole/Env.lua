@@ -2,6 +2,7 @@
 -- One disposable client-local set. Interiors are separate sound stages, never
 -- solid shells superimposed on the exterior. No global Terrain edits to undo.
 local Kit = require(script.Parent.Kit)
+local VehicleMotion = require(script.Parent.VehicleMotion)
 local Env = {}
 local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
 local C = {
@@ -28,8 +29,13 @@ local C = {
  -- Lab surfaces: deliberately NOT ivory. A near-white wall under a warm
  -- practical is what turned the command room into a white box with glowing
  -- people in it; these sit low enough to hold detail under a real key light.
+ -- labTrim is the island top, the door frame and the console lips. At 164 it
+ -- was the brightest surface in the command room - brighter than the coats
+ -- (152) and brighter than any face - which put the eye on an empty counter
+ -- in every wide. Brought under the coat ceiling so the people are the
+ -- lightest thing in frame that is not a screen.
  labWall = Color3.fromRGB(126,134,142), labWallDark = Color3.fromRGB(84,92,100),
- labFloor = Color3.fromRGB(58,64,70), labTrim = Color3.fromRGB(150,158,164),
+ labFloor = Color3.fromRGB(58,64,70), labTrim = Color3.fromRGB(130,137,144),
 }
 Env.Colors = C
 Env.Zones = {
@@ -156,14 +162,36 @@ local function buildWheel(parent,name)
   on itself at a half-turn the way three does, and reaching further out means
   the pattern sweeps a longer arc for the same rotation.
  ]]
- local rim=Kit.cylinder({name="Rim",size=V(WHEEL_W*1.06,WHEEL_R*1.34,WHEEL_R*1.34),cframe=CF(),color=Color3.fromRGB(88,96,104),material=Enum.Material.Metal},"x")
+ local rim=Kit.cylinder({name="Rim",size=V(WHEEL_W*1.06,WHEEL_R*1.34,WHEEL_R*1.34),cframe=CF(),color=Color3.fromRGB(74,81,89),material=Enum.Material.Metal},"x")
  rim.Parent=m
+ --[[
+  Five RADIAL spokes, not five diameter bars.
+
+  The previous face used full-length bars through the hub, which is ten arms
+  at 36-degree spacing plus a hi-vis cap covering most of the dish. Rendered,
+  that is a white daisy: the brightest object in the whole Arctic sequence,
+  and - because a ten-fold pattern repeats every 36 degrees - one that tells
+  you almost nothing about which way the wheel has turned.
+
+  Radial spokes give five-fold symmetry, and the timing mark below breaks
+  even that, so any rotation at all is unambiguous. The value comes down to
+  sit BETWEEN the hull (96) and the rim dish (74): still the brightest thing
+  on the wheel, so orientation reads, but no longer brighter than the sky.
+ ]]
  for i=1,5 do
-  local spoke=Kit.part({name="Spoke",size=V(WHEEL_W*1.1,WHEEL_R*1.36,0.3),cframe=CF()*A(i*math.pi/5,0,0),color=Color3.fromRGB(176,183,190),material=Enum.Material.Metal})
+  local a=i/5*math.pi*2
+  local spoke=Kit.part({name="Spoke",size=V(WHEEL_W*1.08,WHEEL_R*0.62,0.26),
+   cframe=CF(0,math.cos(a)*WHEEL_R*0.38,math.sin(a)*WHEEL_R*0.38)*A(a,0,0),
+   color=Color3.fromRGB(142,150,158),material=Enum.Material.Metal})
   spoke.Parent=m
  end
- local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.5,WHEEL_R*0.5),cframe=CF(),color=C.hiVis,material=Enum.Material.Metal},"x")
+ -- A small hub, and one hi-vis timing mark out near the rim. The mark is what
+ -- makes a slow roll legible: with it, a quarter turn is obvious in a still
+ -- frame, which is the actual acceptance test for 03b_WheelContact.
+ local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.34,WHEEL_R*0.34),cframe=CF(),color=Color3.fromRGB(108,116,124),material=Enum.Material.Metal},"x")
  cap.Parent=m
+ local mark=Kit.part({name="TimingMark",size=V(WHEEL_W*1.16,WHEEL_R*0.3,0.2),cframe=CF(0,WHEEL_R*0.74,0),color=C.hiVis,material=Enum.Material.SmoothPlastic})
+ mark.Parent=m
  -- Every part above is authored around the origin, so the identity frame is
  -- the wheel's own reference: place(target) then puts the whole wheel where
  -- the axle goes. See Kit.rigid for why this is not Model:PivotTo.
@@ -289,10 +317,16 @@ local function vehicle(parent,cf,kind,index)
   table.insert(lights,spot)
   part(body,"TailLight",V(0.42,0.28,0.14),at(side*w*0.34,deckY+0.2,l*0.47),Color3.fromRGB(179,55,44),Enum.Material.Neon,nil,0.15)
  end
- -- The pool the beams land in. Snow under a headlight is the readable part of
- -- a headlight; the cone itself is invisible without volumetrics.
- local pool=part(body,"HeadlampPool",V(w*1.5,0.06,l*1.4),at(0,0.08,-l*1.15),C.warm,Enum.Material.Neon,nil,0.88)
- pool.CastShadow=false;pool.CanQuery=false
+ --[[
+  There is deliberately no fake light "pool" geometry here any more.
+
+  A Neon slab parented to `body` is rigid to the hull, so it pitched and
+  rolled with the suspension and slid over the snow as one hard-edged glowing
+  rectangle a stud in front of the bumper - visibly a prop, and the most
+  eye-catching thing in the convoy shots. The SpotLight above already lands a
+  real, terrain-following pool on the snow, which is the whole reason it is
+  aimed ahead of the bull bar and pitched down; that is what the shot shows.
+ ]]
 
  if kind=="EquipmentCarrier" then
   crate(body,at(0,deckY+1.7,l*0.2),V(4,1.9,3))
@@ -333,7 +367,7 @@ local function vehicle(parent,cf,kind,index)
   another for the whole cinematic (see Kit.rigid).
  ]]
  local placeBody=Kit.rigid(body,cf)
- local handle={model=m,body=body,placeBody=placeBody,wheels=wheels,base=cf,spray=emitter,sprayHost=spray,lights=lights,pool=pool,
+ local handle={model=m,body=body,placeBody=placeBody,wheels=wheels,base=cf,spray=emitter,sprayHost=spray,lights=lights,
   length=l,width=w,deckY=deckY,spin=0,pitch=0,roll=0,lift=0,speed=0}
  -- Place it once so a parked vehicle is already sitting on the snow, level,
  -- before any shot ever touches it.
@@ -688,16 +722,39 @@ local function commandRoom(env,rng)
   part(room,"IslandFloorMark",V(0.22,0.06,8),at(side*5.4,0.04,-3.6),C.hiVis,Enum.Material.SmoothPlastic)
  end
 
- -- The focal point ----------------------------------------------------------
- part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-6.4),C.labWallDark)
- env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-6.4)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
- part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-6.55)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  The focal point.
+
+  Stood back from z=-6.4 to -9.2. At the old depth the panel was only about
+  six studs beyond the people working at the island, and all three of them
+  face it - so every reverse angle in the scene was taken from BEHIND it.
+  Measured in Studio, the dialogue mediums for Lyra and Voss put the lens at
+  z=-6.5, a fifth of a stud past the screen, and the camera's obstruction
+  correction had to swing every one of those shots around it.
+
+  Three studs further back and the same framing clears the panel by over a
+  stud and a half, the room gets a deeper background behind the cast, and the
+  screen is still the thing they are all looking at.
+ ]]
+ part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-9.2),C.labWallDark)
+ env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-9.2)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
+ part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-9.35)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  ON THE ROOM SIDE of the panel.
+
+  The display is built with no yaw, so its local -Z (which is what Roblox
+  calls a part's Front, and what Kit.label defaults to) points AWAY from the
+  people standing at the island. The three pulse bars were mounted at local
+  z=-0.18 and the printed marking on Front, so both of them were on the back
+  of the screen: the shot that exists to show the returning signal rendered as
+  a blank blue sheet, which is exactly what it looked like in Studio.
+ ]]
  env.pulses={}
  for i=1,3 do
-  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,-0.18),C.cyan,Enum.Material.Neon)
+  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,0.18),C.cyan,Enum.Material.Neon)
   table.insert(env.pulses,pulse)
  end
- Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan)
+ Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan,Enum.NormalId.Back)
  -- The display's own spill, aimed into the room: this is the light that
  -- actually falls on Lyra's and Voss's faces while they read it.
  local spill=part(room,"DisplaySpill",V(0.3,0.3,0.3),at(0,4.8,-5.6),C.cyan,Enum.Material.Neon,nil,1)
@@ -1119,7 +1176,17 @@ end
  the truck is moving" is true by construction rather than by tuning. Y in the
  supplied endpoints is ignored: the snow decides the height.
 ]]
-function Env.moveVehicle(v,from,to,t)
+--[[
+ How fast the suspension settles, in "fraction of the way per second" terms
+ (see VehicleMotion.expAlpha). 12 reproduces the feel the old fixed 0.18
+ per-frame blend had at 60 fps - 1-(1-0.18)^60 is essentially the same
+ curve - but now it is that same curve at any frame rate, instead of settling
+ twice as fast on a 120 Hz display and half as fast on a 30 Hz one.
+]]
+local SUSPENSION_RESPONSE = 12
+
+function Env.moveVehicle(v,from,to,t,deltaTime: number?)
+ local dt=deltaTime or 0
  local a=Kit.smooth(t)
  local pos=from:Lerp(to,a)
  local direction=to-from
@@ -1135,18 +1202,25 @@ function Env.moveVehicle(v,from,to,t)
   if V(delta.X,0,delta.Z):Dot(V(facing.X,0,facing.Z))<0 then travelled=-travelled end
  end
  v.lastPos=pos
+ -- Rotation from distance covered, never from elapsed time. Unchanged, and
+ -- deliberately so: this is the one relationship that makes the wheels agree
+ -- with the ground under them, and it is already frame-rate independent
+ -- because `travelled` is a distance, not a rate.
  v.spin+=travelled/WHEEL_R
 
- -- Speed drives the body's fore/aft weight transfer and the snow spray.
- local speed=math.abs(travelled)*60
- local accel=speed-(v.speed or 0)
+ -- Speed drives the body's fore/aft weight transfer and the snow spray. Both
+ -- are now per-SECOND quantities derived from the real step, so a 30 fps
+ -- machine and a 144 fps machine show the same truck.
+ local speed=VehicleMotion.speed(travelled,dt)
+ local accel=VehicleMotion.acceleration(speed,v.speed or 0,dt)
  v.speed=speed
- Env.settleVehicle(v,pos,facing,0.18)
+ Env.settleVehicle(v,pos,facing,VehicleMotion.expAlpha(SUSPENSION_RESPONSE,dt))
  -- Squat under acceleration, dive under braking: a small pitch on top of the
- -- terrain attitude, which is what gives the hull a sense of mass.
- v.pitch=math.clamp(v.pitch+math.clamp(accel*0.004,-0.02,0.02),-MAX_PITCH*1.4,MAX_PITCH*1.4)
+ -- terrain attitude, which is what gives the hull a sense of mass. The
+ -- coefficient is now against studs/s^2 rather than a per-frame speed delta,
+ -- hence the much smaller constant; the clamp keeps it restrained either way.
+ v.pitch=math.clamp(v.pitch+math.clamp(accel*0.00007,-0.02,0.02),-MAX_PITCH*1.4,MAX_PITCH*1.4)
 
  if v.spray then v.spray.Rate=(t>0 and t<1) and math.clamp(speed*0.9,0,45) or 0 end
- if v.pool then v.pool.Transparency=0.88 end
 end
 return Env

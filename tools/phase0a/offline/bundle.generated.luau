@@ -142,6 +142,20 @@ function Shim.CFrame.Angles(rx,ry,rz)
  return newCF(Shim.V3(0,0,0),col0,col1,col2)
 end
 function Shim.CFrame.fromMatrix(p,xv,yv,zv) return newCF(p,xv,yv,zv) end
+-- Rodrigues' rotation, stored as columns like CFrame.Angles above. Needed
+-- because Camera.applyShot orbits a blocked lens around the focus by rotating
+-- its offset about world up, which is the one correction that keeps a shot's
+-- framing while getting it out of a wall.
+function Shim.CFrame.fromAxisAngle(axis,angle)
+ local u=axis.Unit
+ local c,s=math.cos(angle),math.sin(angle)
+ local t=1-c
+ local x,y,z=u.X,u.Y,u.Z
+ local col0=Shim.V3(t*x*x+c,   t*x*y+s*z, t*x*z-s*y)
+ local col1=Shim.V3(t*x*y-s*z, t*y*y+c,   t*y*z+s*x)
+ local col2=Shim.V3(t*x*z+s*y, t*y*z-s*x, t*z*z+c)
+ return newCF(Shim.V3(0,0,0),col0,col1,col2)
+end
 function Shim.CFrame.lookAt(at,target,up)
  up=up or Shim.V3(0,1,0)
  local forward=(target-at).Unit

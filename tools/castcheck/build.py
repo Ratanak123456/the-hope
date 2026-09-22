@@ -60,6 +60,7 @@ sources=[
  ("Palette","src/shared/Palette.lua"),
  ("Settings","src/client/Settings.lua"),
  ("Kit","src/client/NorthPole/Kit.lua"),
+ ("VehicleMotion","src/client/NorthPole/VehicleMotion.lua"),
  ("Env","src/client/NorthPole/Env.lua"),
  ("Cast","src/client/NorthPole/Cast.lua"),
  ("Lighting","src/client/NorthPole/Lighting.lua"),

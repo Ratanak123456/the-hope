@@ -228,7 +228,7 @@ local function play(run)
  local ready=os.clock()
  while not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") do
   if run.cancelled or os.clock()-ready>8 then return end
-  RunService.RenderStepped:Wait()
+  RunService.PreRender:Wait()
  end
  hideAvatar(run,player.Character)
  connect(run,player.CharacterAdded,function(character)
@@ -277,7 +277,7 @@ local function play(run)
    -- Reconstruct state in chronological order for reproducible single-shot tests.
    local desired=run.seek;run.seek=nil;run.seeking=true
    run.audio:stopSequence()
-   for i=1,desired-1 do local st=shots[i].enter();shots[i].update(st,1);shots[i].leave(st) end
+   for i=1,desired-1 do local st=shots[i].enter();shots[i].update(st,1,0);shots[i].leave(st) end
    run.seeking=false;index=desired
   end
   local shot=shots[index];run.index=index
@@ -286,10 +286,13 @@ local function play(run)
   local state=shot.enter()
   local elapsed=0
   while elapsed<shot.duration and not run.cancelled and not run.seek do
-   local dt=RunService.RenderStepped:Wait()
+   -- PreRender is the current name for the pre-render step (RenderStepped is
+   -- deprecated). Same event, same delta, and the cinematic's per-frame work is
+   -- exactly what belongs here: camera and final visual transforms.
+   local dt=RunService.PreRender:Wait()
    if run.finished then return end
    if not run.paused then elapsed+=dt end
-   shot.update(state,math.clamp(elapsed/shot.duration,0,1))
+   shot.update(state,math.clamp(elapsed/shot.duration,0,1),dt)
    local eligible=os.clock()-run.started>3 and index<#shots
    run.skip.Visible=eligible
    if eligible then
@@ -308,7 +311,7 @@ local function play(run)
   for _,bar in run.bars do animate(run,bar,{Size=UDim2.fromScale(1,0)},0.25) end
   -- Tiny bounded exit, including Skip; never waits for audio or tween completion.
   local start=os.clock()
-  while os.clock()-start<0.25 and not run.finished do RunService.RenderStepped:Wait() end
+  while os.clock()-start<0.25 and not run.finished do RunService.PreRender:Wait() end
  end
 end
 function Opening.start(_parent: Frame,finish: () -> ())
