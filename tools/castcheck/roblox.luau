@@ -35,15 +35,23 @@ R.NumberSequence={new=function(v) return {Value=v} end}
 R.ColorSequence={new=function(v) return {Value=v} end}
 R.RaycastParams={new=function() return {FilterType=nil,FilterDescendantsInstances={},IgnoreWater=false} end}
 R.OverlapParams={new=function() return {FilterType=nil,FilterDescendantsInstances={},MaxParts=0} end}
-R.Random={new=function(seed)
+-- Clone is a real Random method: it returns an independent generator carrying
+-- the source's CURRENT state, so both continue the same sequence separately.
+-- Env.lua uses it to keep the seeded set layout stable while re-authoring the
+-- geometry that used to consume those draws.
+local function makeRandom(seed)
  local state=seed or 0
+ local self
  local function next()
   state=(1103515245*state+12345)%2147483648
   return state/2147483648
  end
- return {NextNumber=function(_,a,b) local v=next() if a==nil then return v end return a+(b-a)*v end,
-  NextInteger=function(_,a,b) return a+math.floor(next()*(b-a+1)) end}
-end}
+ self={NextNumber=function(_,a,b) local v=next() if a==nil then return v end return a+(b-a)*v end,
+  NextInteger=function(_,a,b) return a+math.floor(next()*(b-a+1)) end,
+  Clone=function() return makeRandom(state) end}
+ return self
+end
+R.Random={new=makeRandom}
 
 --------------------------------------------------------------------------------
 -- Instances
@@ -230,8 +238,87 @@ R.useSolids=false
 
 local workspaceInstance=R.newInstance("Workspace")
 rawset(workspaceInstance,"Name","Workspace")
+--[[
+ An OBLIQUE ray is a real ray, not a ground probe.
+
+ RaycastSolids below answers "what surface is under this point", which is what
+ Cast.floorUnder and Env.surfaceY want and is why it is fast enough to run
+ thousands of times a harness. It is the wrong answer for the one caller that
+ asks a different question: Camera.inspect's obstruction test, which fires a
+ long, shallow ray from a lens toward a subject. Read as a vertical probe, a
+ lens standing over ANY raised geometry reports blocked, so every exterior shot
+ that looks down at its subject - which the Arctic arrival does for its whole
+ length - was reported obstructed. Camera.applyShot then orbited away from the
+ authored framing and CACHED that correction for the rest of the take, so the
+ scenecheck frames showed a camera nobody wrote.
+
+ So: near-vertical rays keep the fast column probe, and anything else gets a
+ real segment-vs-box sweep. That split is what keeps the cost off the ground
+ queries, which are the thousands; camera rays are a few thousand in total.
+ A rotated box is tested as its world AABB - conservative, but enormously
+ tighter than "anything in the column below it".
+]]
+local function segmentHitsSolids(origin,direction,params)
+ local exclude={}
+ if params and params.FilterDescendantsInstances then
+  for _,item in params.FilterDescendantsInstances do exclude[item]=true end
+ end
+ local best,bestSolid=nil,nil
+ for _,solid in R.solids do
+  -- CanQuery=false is how this set opts thin trim (marker flags, wheel-arch
+  -- flares, mud flaps) out of camera queries; a shim that ignores it reports
+  -- obstructions the engine would never report.
+  if rawget(solid,"Transparency")<0.65 and rawget(solid,"CanQuery")~=false then
+   local skip=false
+   local node=solid
+   while node do
+    if exclude[node] then skip=true break end
+    node=rawget(node,"Parent")
+   end
+   if not skip then
+    local attached,walk=false,solid
+    while walk do
+     if walk==workspaceInstance then attached=true break end
+     walk=rawget(walk,"Parent")
+    end
+    skip=not attached
+   end
+   if not skip then
+    local cf=rawget(solid,"CFrame")
+    local size=rawget(solid,"Size")
+    local p=cf.p
+    -- World AABB of the (possibly rotated) box.
+    local hx=math.abs(cf.xv[1])*size[1]/2+math.abs(cf.yv[1])*size[2]/2+math.abs(cf.zv[1])*size[3]/2
+    local hy=math.abs(cf.xv[2])*size[1]/2+math.abs(cf.yv[2])*size[2]/2+math.abs(cf.zv[2])*size[3]/2
+    local hz=math.abs(cf.xv[3])*size[1]/2+math.abs(cf.yv[3])*size[2]/2+math.abs(cf.zv[3])*size[3]/2
+    -- Slab test over the segment t in [0,1].
+    local lo,hi=0,1
+    for axis,half in {hx,hy,hz} do
+     local o,d,c=origin[axis],direction[axis],p[axis]
+     if math.abs(d)<1e-9 then
+      if math.abs(o-c)>half then lo=2 break end
+     else
+      local t1,t2=(c-half-o)/d,(c+half-o)/d
+      if t1>t2 then t1,t2=t2,t1 end
+      if t1>lo then lo=t1 end
+      if t2<hi then hi=t2 end
+      if lo>hi then lo=2 break end
+     end
+    end
+    if lo<=hi and lo<=1 and hi>=0 and (best==nil or lo<best) then best,bestSolid=lo,solid end
+   end
+  end
+ end
+ if best==nil then return nil end
+ return {Position=Vector3.new(origin.X+direction.X*best,origin.Y+direction.Y*best,origin.Z+direction.Z*best),
+  Instance=bestSolid,Normal=Vector3.new(0,1,0)}
+end
 function workspaceInstance:Raycast(origin,direction,params)
  R.rayCount+=1
+ local length=direction.Magnitude
+ if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.9 then
+  return segmentHitsSolids(origin,direction,params)
+ end
  if direction.Y>=0 then return nil end
  local hitY=nil
  if R.useSolids then hitY=self:RaycastSolids(origin,direction,params) end

@@ -18,12 +18,14 @@ local V=Vector3.new
 -- brief is about: the Arctic arrival's composition and its vehicle, then the
 -- lab's master, coverage and reverse.
 local CAPTURES={
- {"02_ArcticEstablishing",0.15},
- {"02_ArcticEstablishing",0.95},
- {"03_ConvoyTracking",0.5},
- {"03b_WheelContact",0.5},
- {"04_GateArrival",0.35},
- {"05_WorkingBaseReveal",0.6},
+ -- The arrival is now ONE continuous shot, so it is sampled along its length
+ -- rather than once per old cut: the convoy entering far up the route, passing
+ -- the gate, and the held final composition with both trucks parked.
+ {"02_ArcticArrival",0.0},
+ {"02_ArcticArrival",0.25},
+ {"02_ArcticArrival",0.5},
+ {"02_ArcticArrival",0.75},
+ {"02_ArcticArrival",1.0},
  {"06_CommandMaster",0.5},
  {"06b_VossSignal",0.5},
  {"06c_HaleSpacecraft",0.5},

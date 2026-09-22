@@ -352,16 +352,22 @@ function Sequences.build(env,c,ui): {Shot}
   end
   return shot
  end
- --[[
-  ARRIVAL, shots 01-06. The job of this stretch is four facts, in order:
-  somebody is out here (radio over black), it is enormous and empty (high
-  wide), they are DRIVING - real machines on real ground (tracking + wheel
-  insert), and they have arrived somewhere specific (the gate, then the site).
-
-  The route runs from +Z toward the base at Z=0; the gate stands at Z=52 and
-  the parking apron just inside it, so "passing the gate" is a real event the
-  camera can cover rather than an arbitrary stop on open snow.
- ]]
+ -- Arrival stays on one camera from the approach through the final park.
+ local function segmentAlpha(time: number,startTime: number,duration: number): number
+  return math.clamp((time-startTime)/duration,0,1)
+ end
+ local LEAD_APPROACH=Z.BaseCenter+V(0,0,150)
+ local LEAD_GATE=Z.BaseCenter+V(0,0,62)
+ local LEAD_PARK=Z.BaseCenter+V(0,0,16)
+ local SECOND_APPROACH=Z.BaseCenter+V(0,0,178)
+ local SECOND_GATE=Z.BaseCenter+V(0,0,96)
+ local SECOND_PARK=Z.BaseCenter+V(0,0,34)
+ local function convoyCenter()
+  local first=env.vehicles[1].model.PrimaryPart
+  local second=env.vehicles[2].model.PrimaryPart
+  if not first or not second then return Z.BaseCenter+V(0,4,60) end
+  return (first.Position+second.Position)*0.5+V(0,4,0)
+ end
  --[[
   The radio over black - but not FIVE SECONDS of a dead frame.
 
@@ -390,116 +396,26 @@ function Sequences.build(env,c,ui): {Shot}
   -- exposure rather than a jump from nothing to a lit landscape.
   ui.setBlackout(math.clamp((a-0.35)/0.65,0,1)*0.72)
   Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,166),Z.BaseCenter+V(0,0,150),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,194),Z.BaseCenter+V(0,0,178),a,dt)
  end})
- -- High and far, with the near ice ridges crossing the bottom of frame: the
- -- convoy is deliberately small here. One clean location card, lower left.
- --[[
-  Lowered, hard, and brought in.
-
-  At 115 studs and a 24-degree elevation this was a map: the convoy, the
-  route, the base and the ice field were all at the same apparent scale, all
-  below the lens, and nothing crossed the near edge of the frame - which is
-  the exact recipe for a tabletop model. The header's own claim that "the
-  near ice ridges cross the bottom of frame" was not true of the shot it was
-  written above; measured offline, the nearest thing in the picture was 60
-  studs away.
-
-  At 72 studs and 10 degrees the ice field has to be looked THROUGH: near
-  shards cross the bottom and the sides at a completely different scale to
-  the convoy, the route runs away from the lens instead of across it, and the
-  base sits small and high in frame where distance puts it. Same four layers
-  the shot always wanted, in an order the eye can actually read.
- ]]
- add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(34,13,62),{light="Exterior",fov=58,to=V(29,11,53),focusOffset=V(0,9,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
+ -- A high three-quarter crane follows BOTH vehicles. Its final two seconds
+ -- hold the completed parking composition; the next cut is straight inside.
+ add("02_ArcticArrival",14,convoyCenter,V(38,19,58),{light="Exterior",fov=54,to=V(48,26,70),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",foreground={env.vehicles[1].model,env.vehicles[2].model,env.gate},enter=function()
   ui.setTitleCard({"THE NORTH POLE","Fifteen years before the invasion"},"Location")
- end,update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a,dt)
+  ui.playCue("Machinery.VehicleTracks")
+ end,update=function(_,elapsed,dt)
+  if elapsed<7 then
+   Env.moveVehicle(env.vehicles[1],LEAD_APPROACH,LEAD_GATE,segmentAlpha(elapsed,0,7),dt)
+  else
+   Env.moveVehicle(env.vehicles[1],LEAD_GATE,LEAD_PARK,segmentAlpha(elapsed,7,3.5),dt)
+  end
+  if elapsed<8 then
+   Env.moveVehicle(env.vehicles[2],SECOND_APPROACH,SECOND_GATE,segmentAlpha(elapsed,0,8),dt)
+  else
+   Env.moveVehicle(env.vehicles[2],SECOND_GATE,SECOND_PARK,segmentAlpha(elapsed,8,4),dt)
+  end
+  if elapsed>=4 then ui.setTitleCard(nil);ui.setSubtitle(nil,"") end
  end,leave=function() ui.setTitleCard(nil) end})
- --[[
-  Alongside, just above hull height: the shot that has to sell weight.
-
-  The camera sits outside the ploughed berm looking across the route, so the
-  marker poles pass through frame and the movement has something to measure
-  itself against. The poles stand at x=+-9.4 (ROUTE_HALF+2.4 in Env.lua), so
-  the lateral offset has to clear them by enough that they read as passing
-  foreground: at 13 studs out, a pole was 3.3 studs from the lens and its
-  flag alone covered a quarter of the frame - not a wipe, a blindfold. At 19
-  it is 9.6 studs away and reads as what it is.
-
-  The height matters for the same reason in the other axis: the flags sit at
-  3.2-3.9 studs, which was exactly the old lens height, so they crossed dead
-  centre. Above them, the frame looks slightly down across the route and the
-  berm falls below the tyres instead of cutting them off.
- ]]
- --[[
-  `to` is the important part of this shot now. With a fixed offset the lens
-  was welded to the truck: the hull filled the same pixels for three seconds,
-  and the only evidence of movement was the marker poles ticking past. The
-  camera now falls back nine studs over the shot - ahead of the cab to behind
-  the rear axle - so the truck visibly pulls away from the lens, the poles
-  sweep instead of tick, and the flank is read end to end rather than held.
- ]]
- add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,to=V(17.5,1.5,2.5),cue="Machinery.VehicleTracks",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a,dt)
- end})
- --[[
-  The wheel itself. A rotating cylinder proves nothing at a distance, so one
-  deliberate insert, close enough that the spokes and the contact patch are
-  unambiguous.
-
-  Wheel 5 is the RIGHT-hand middle wheel (wheels are built left side first,
-  front to back, then right), so a camera at +X is on the same side of the
-  truck as its subject rather than looking at it through the hull.
-
-  The lens sits just below the axle, INSIDE the route rather than outside it.
-  Both of those matter:
-
-   * below the axle, because from above it the whole upper frame was the
-     hull, the arch and the skirt - all bodywork, all the same dark value as
-     the tyre, so the insert was a black rectangle. From here the contact
-     patch sits in the lower third where it can be seen meeting the ground.
-   * OUTBOARD but above the berm. The wheel's own face - rim, five spokes,
-     hub - is the part that shows rotation, and it only faces a camera that
-     is out to the side. The ploughed berms stand at x=+-6.6 to 10.0 and are
-     up to 1.7 studs high, though, so a low outboard camera sat INSIDE one
-     and Camera.applyShot's unstick fallback threw the framing away every
-     time this shot played. At 2.55 studs up, the sightline clears the berm
-     with room to spare and still looks down onto the contact patch.
-
-  At 6.4 studs with a 36-degree lens the wheel fills most of the frame, so
-  the spokes sweeping past and the tread meeting the snow are the shot.
- ]]
- -- Two seconds rather than 1.6: at this distance the wheel turns nearly twice
- -- either way, and the extra beat is what lets the eye settle on the contact
- -- patch instead of only registering that something moved.
- add("03b_WheelContact",2,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a,dt)
- end})
- -- Arrival: the lead truck passes under the lit gate. Destination, stated.
- -- Closer and tighter than it was: at 42 studs out the gate was a small frame
- -- in the corner of a wide site shot, and the parked apron vehicles read as
- -- the subject. The site gets its own wide next, in 05.
- --[[
-  The convoy is declared FOREGROUND here, which is the whole point of the shot:
-  the lead truck drives between the lens and the gate on its way through it.
-  Without saying so, the obstruction check reads the truck as a wall - Studio's
-  mid-shot warning caught this one orbiting twice and then abandoning its
-  framing entirely as the truck crossed, which nothing had ever reported
-  because the per-shot report only prints a shot's first frame.
- ]]
- add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",foreground={env.vehicles[1].model,env.vehicles[2].model},update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a,dt)
- end})
- -- The site, wide: modules, masts, the drill head and the excavation, all lit
- -- by their own practicals. Held on a slow push so it reads as a place rather
- -- than a fly-past.
- add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a,dt)
- end})
  -- 06. Inside. A master first - who is in this room and where they stand -
  -- then cut on every speaker.
  master("06_CommandMaster",3,"Command",{light="Command",cue="Radio.SignalPulse",enter=function()

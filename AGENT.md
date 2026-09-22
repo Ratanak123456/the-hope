@@ -1384,6 +1384,113 @@ they look like. `07e_SkippingClock` has the same behind-the-display camera bug
 poses lean the torso far enough to trip the validator; both are outside this
 scope and are left reported rather than fixed.
 
+## 2026-09-22 session: Scene 1, the Arctic convoy arrival, IN STUDIO
+
+Scoped to the first Arctic convoy scene only, against a brief listing four
+visible faults: the two arriving trucks overlapping when parked, too many cuts
+for one simple arrival, a snowfield of rounded balls, and a tiled road. Driven
+in Studio (Vinegar on `:1`, Rojo live-sync, XTEST, `grim`) and accepted on
+rendered frames, not on harness output. Nothing past `06_CommandMaster` was
+touched.
+
+**Parking.** `LEAD_PARK`/`SECOND_PARK` are `BaseCenter+(0,0,16)` and
+`+(0,0,34)`: 18 studs apart on an 11.5-stud vehicle. The old 30/38 gave 8
+studs, which is less than one truck, so the second truck ended the shot inside
+the first. Measured across the whole move rather than assumed - the two bodies'
+closest approach is **5.79 studs**, at t=12.1s. `castcheck` now asserts that
+every run (`== the arriving convoy never overlaps itself ==`): it drives the
+REAL shot at 140 steps and demands the two world AABBs stay apart, which is
+sound in the fail direction, plus that the lead parks deeper and both are
+stationary on the frame the shot cuts on.
+
+**One camera instead of five.** `02_ArcticEstablishing`, `03_ConvoyTracking`,
+`03b_WheelContact`, `04_GateArrival` and `05_WorkingBaseReveal` are replaced by
+one 14s crane, `02_ArcticArrival`, focused on the midpoint between the two
+trucks and driven by elapsed shot time through a `segmentAlpha` helper. Wheel
+rotation is untouched and still distance-derived - the insert is gone, not the
+wheel. 94 shots now, was 98.
+
+**The defect that only Studio could find.** The crane reported clean on its
+first frame and then COLLAPSED 9.4s into the 14s take: the `GateSign` crossed
+the sightline for exactly 2 frames as the lead truck passed under the gate, and
+Camera.applyShot abandoned the framing and held a 54-degree orbit for the
+remaining 194 frames. One deliberate move became two shots, from two frames of
+an object the shot exists to look past. Fixed by grouping the gate into one
+model (`env.gate`) and declaring it in the shot's `foreground`, which is
+exactly what that field is for. Found by setting `ValidateEveryFrame` on
+`workspace.NorthPoleCinematic` so the camera report prints every frame instead
+of only a shot's first - that attribute is a diagnostic and was removed again.
+
+**`01_BlackRadio` was corrected for its whole length too**, and the cause was
+environmental: `NearIceRidge` was placed at `|x| 26..76` with widths up to 34,
+so a ridge reached x=9 - two studs off the roadbed edge, fifteen studs tall.
+That is a canyon wall, not near-field relief. The x range is now 44..92, which
+puts the nearest face 27 studs out. It is ONE draw in the same position in the
+seeded sequence, so nothing downstream of that loop shifts.
+
+**Snow and road.** The ball-based snowfield is gone: one continuous
+`PackedSnowField` (1100x3x1100) over the existing ice shelf, with 34 low
+two-wedge `snowRidge` crests for wind relief, placed outside the route and the
+base footprint. The road is one `GradedRoadbed` instead of 31 tiled blocks, and
+the ruts are five long overlapping segments per side that wander slightly in
+width and across the roadbed, rather than either one perfect 184-stud stripe or
+the old 115 repeated tread rectangles. The apron was rebuilt at 52x44 centred
+at z=27 (runs z=5..49) and the two static service vehicles moved to x=-10.5 and
+x=16 so the centre lane is clear. Its colour moved from `ice:Lerp(snow,0.22)`
+to `0.5` - at 0.22 it was bluer than both the road feeding it and the snow
+around it, and read as a rectangle of water dropped into the set.
+
+**Studio result:** `01_BlackRadio` 188 frames, `02_ArcticArrival` 631 frames,
+`06_CommandMaster` 170 frames, **0 corrections, 0 blocks, 0 failures, 0
+`[OpeningCamera]` warnings, 0 `[ActorValidation]` warnings**. Frames and the
+numbers are in `docs/visual-rebuild/2026-09-22-arctic-arrival/`.
+
+### Three tooling bugs fixed on the way, because the tools were lying
+
+The offline renderer could not draw this scene at all, and said nothing:
+
+1. **`tri()` discarded any triangle with a vertex behind the near plane.** Safe
+   while every part is small; the new ground is a single 1100-stud slab whose
+   every face has corners behind any camera standing on it, so the entire
+   snowfield vanished and the frame showed sky where the ground is.
+   `draw_floor`'s own docstring had described this hazard for years. Now
+   properly clipped (`_clip_near`), at `NEAR=0.0625` - strictly inside
+   `Camera.project`'s own 0.05 cutoff, or every clipped vertex lands on the
+   reject boundary and the triangle is dropped by the check the clipping exists
+   to avoid.
+2. **Depth was interpolated linearly in screen space, not perspective-correct.**
+   Invisible on a small part; on the ground slab the error was large enough
+   that its UNDERSIDE won the depth test against its own top face, so the snow
+   rendered as flat ambient-only dark grey. Now interpolates 1/z.
+3. **The Roblox shim answered every raycast with a vertical ground probe.**
+   That is right for `Cast.floorUnder`/`Env.surfaceY`, which are thousands of
+   queries, and wrong for the one caller that fires a long shallow ray -
+   `Camera.inspect` - so every downward-looking exterior shot read as blocked.
+   Oblique rays now get a real segment-vs-box sweep, honouring `CanQuery=false`
+   the way the engine does; near-vertical rays keep the fast path, so the cost
+   stays off the ground queries (harness is ~44s, was ~67s before the session's
+   other changes). A prior session tried replacing the whole thing and reverted
+   it for speed - this splits by ray direction instead. `Random:Clone()` was
+   also missing from the shim.
+
+Honest ray-casting made **10 pre-existing shots** report that they are being
+moved off their authored framing: `06_ThreePulses`, `07b_IceFragments`,
+`07e_SkippingClock`, `14d_GuardianNotBuried`, `18_PrisonAndFrozenArmy`,
+`29e_TowerFalls`, `30c_TellThem`, `31b_CanYouStopIt`, `31e_ThousandsOfYears`,
+`31f_ProtectTogether`, `37_AlienCarrier`. All are outside this pass (command
+room, excavation, prison, closing space shots) and none is fixed here. They are
+listed by name in `KNOWN_FRAMING_FLAGS` in `tools/castcheck/run.luau` and
+printed every run, so they stay visible - and any shot NOT on that list that
+starts failing is still a hard failure. They are flagged, not proven: the sweep
+still approximates a wedge and a rotated box by its world AABB. Studio confirmed
+one of them directly - `07b_IceFragments` is blocked by
+`RotatingAuger.DriveShaft`.
+
+**Not done, deliberately:** anything past `06_CommandMaster`; the Aegis and
+Sovereign rigs; audio; lighting (the brief put exterior lighting out of scope,
+and the arrival is noticeably hazy/low-contrast in Studio - worth a look, but
+it is `Lighting.lua`'s call, not this pass's).
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
@@ -1397,6 +1504,16 @@ scope and are left reported rather than fixed.
    `07e_SkippingClock` has the behind-the-display camera bug, and the
    excavation workers' `CarryCase`/`OperateDrill` poses trip the upright
    validator. Also unwatched: the full Start Game -> bedroom spawn -> Daren flow.
+
+   As of the Arctic-arrival pass later the same day there is now a NAMED LIST
+   to work from rather than a guess: `KNOWN_FRAMING_FLAGS` in
+   `tools/castcheck/run.luau` holds the 10 shots whose framing the (now honest)
+   obstruction ray says is being thrown away, every one of them past the
+   command room. Studio confirmed one directly - `07b_IceFragments` is blocked
+   by `RotatingAuger.DriveShaft`. That is the natural starting point for the
+   next Studio pass, and each one needs the same treatment the arrival got:
+   decide whether the thing in the way is legitimate foreground (declare it) or
+   a real obstruction (move the lens).
 
 1. **An actual Studio playtest of the full chapter, start to finish.** See
    above - nothing in this session was verified any other way.

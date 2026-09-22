@@ -1,0 +1,14 @@
+# Agent tooling - local to whoever is working on the repo, not project source.
+.claude/
+CLAUDE.md
+
+# Generated place files. `rojo build default.project.json -o baseline.rbxlx`
+# reproduces this from src/ at any time, and Studio writes a .lock beside it
+# while it has one open.
+baseline.rbxlx
+baseline.rbxlx.lock
+*.rbxlx.lock
+
+# Python bytecode from the offline harnesses.
+__pycache__/
+*.pyc

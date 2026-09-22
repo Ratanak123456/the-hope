@@ -123,8 +123,60 @@ class Camera:
         if z<=0.05: return None
         return ((v[0]/z/self.tx*0.5+0.5)*w,(1-(v[1]/z/self.ty*0.5+0.5))*h,z)
 
+# Strictly INSIDE Camera.project's own near cutoff (0.05). Clipping exactly
+# onto it puts every new vertex on the reject boundary, project() hands back
+# None for it, and the clipped triangle is dropped by the very check the
+# clipping exists to avoid.
+NEAR=0.0625
+
+def _clip_near(poly):
+    """Sutherland-Hodgman against the near plane, in view space.
+
+    A vertex is in front of the lens when its view Z is <= -NEAR (project()
+    negates it). `poly` is a list of (view, world) pairs and the world coords
+    are carried through the same interpolation so the ground grid still lands
+    on whole studs across a clipped triangle.
+    """
+    out=[]
+    for i in range(len(poly)):
+        cur,nxt=poly[i],poly[(i+1)%len(poly)]
+        cin,nin=cur[0][2]<=-NEAR,nxt[0][2]<=-NEAR
+        if cin: out.append(cur)
+        if cin!=nin:
+            t=(-NEAR-cur[0][2])/(nxt[0][2]-cur[0][2])
+            out.append((tuple(cur[0][k]+(nxt[0][k]-cur[0][k])*t for k in range(3)),
+                        tuple(cur[1][k]+(nxt[1][k]-cur[1][k])*t for k in range(3))))
+    return out
+
 def tri(canvas,cam,p0,p1,p2,shade,world=None,grid=False):
-    pts=[cam.project(cam.view(p),canvas.w,canvas.h) for p in (p0,p1,p2)]
+    """Rasterise a world-space triangle, clipping it to the near plane first.
+
+    Dropping a triangle whole because ONE vertex is behind the lens is only
+    safe while every part is small and fully in front. It is not: the Arctic
+    set's ground is a single 1100-stud slab, and every one of its faces has
+    corners behind any camera standing on it, so the entire snow surface
+    silently vanished from these renders - the frame showed the sky where the
+    ground should be, which is worse than showing nothing, because it reads as
+    a hole in the world that Studio does not actually have. draw_floor's own
+    docstring has described this hazard since it was written; this fixes the
+    cause instead of tessellating around it.
+    """
+    vs=[cam.view(p) for p in (p0,p1,p2)]
+    front=[v[2]<=-NEAR for v in vs]
+    if not any(front): return
+    if not all(front):
+        poly=_clip_near(list(zip(vs,world if world else (p0,p1,p2))))
+        if len(poly)<3: return
+        # Fan-triangulate the clipped polygon (3-4 vertices here).
+        for i in range(1,len(poly)-1):
+            part=(poly[0],poly[i],poly[i+1])
+            _raster(canvas,cam,[q[0] for q in part],shade,
+                    tuple(q[1] for q in part) if grid else None,grid)
+        return
+    _raster(canvas,cam,vs,shade,world,grid)
+
+def _raster(canvas,cam,vs,shade,world=None,grid=False):
+    pts=[cam.project(v,canvas.w,canvas.h) for v in vs]
     if any(p is None for p in pts): return
     (x0,y0,z0),(x1,y1,z1),(x2,y2,z2)=pts
     minx=max(0,int(min(x0,x1,x2))); maxx=min(canvas.w-1,int(max(x0,x1,x2))+1)
@@ -132,6 +184,15 @@ def tri(canvas,cam,p0,p1,p2,shade,world=None,grid=False):
     if minx>maxx or miny>maxy: return
     area=(x1-x0)*(y2-y0)-(x2-x0)*(y1-y0)
     if abs(area)<1e-9: return
+    # PERSPECTIVE-CORRECT DEPTH. Depth is NOT linear across a triangle in
+    # screen space; its reciprocal is. Interpolating z directly is close
+    # enough to invisible on a small part and catastrophic on a large one:
+    # the Arctic ground is a single 1100-stud slab, and the error was big
+    # enough that its UNDERSIDE won the depth test against its own top face,
+    # so the whole snowfield rendered as the flat ambient-only dark grey of a
+    # surface lit from behind. That is what "the snow looks dark" was here,
+    # and it was the tool, not the set.
+    iz0,iz1,iz2=1.0/z0,1.0/z1,1.0/z2
     for py in range(miny,maxy+1):
         for px in range(minx,maxx+1):
             fx,fy=px+0.5,py+0.5
@@ -139,14 +200,18 @@ def tri(canvas,cam,p0,p1,p2,shade,world=None,grid=False):
             w1=((x2-fx)*(y0-fy)-(x0-fx)*(y2-fy))/area
             w2=1-w0-w1
             if w0<0 or w1<0 or w2<0: continue
-            z=w0*z0+w1*z1+w2*z2
+            iz=w0*iz0+w1*iz1+w2*iz2
+            if iz<=0: continue
+            z=1.0/iz
             i=py*canvas.w+px
             if z>=canvas.depth[i]: continue
             canvas.depth[i]=z
             rgb=shade
             if grid and world:
-                wx=w0*world[0][0]+w1*world[1][0]+w2*world[2][0]
-                wz=w0*world[0][2]+w1*world[1][2]+w2*world[2][2]
+                # Same correction for the world coordinates the grid is drawn
+                # from, or the stud lines bow across a large floor cell.
+                wx=(w0*world[0][0]*iz0+w1*world[1][0]*iz1+w2*world[2][0]*iz2)*z
+                wz=(w0*world[0][2]*iz0+w1*world[1][2]*iz1+w2*world[2][2]*iz2)*z
                 near=min(abs(wx-round(wx)),abs(wz-round(wz)))
                 major=min(abs(wx-round(wx/5)*5),abs(wz-round(wz/5)*5))
                 fade=max(0.0,1.0-z/70.0)

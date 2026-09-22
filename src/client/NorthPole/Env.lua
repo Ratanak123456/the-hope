@@ -187,7 +187,7 @@ local function buildWheel(parent,name)
  end
  -- A small hub, and one hi-vis timing mark out near the rim. The mark is what
  -- makes a slow roll legible: with it, a quarter turn is obvious in a still
- -- frame, which is the actual acceptance test for 03b_WheelContact.
+ -- frame, and remains legible during the convoy arrival.
  local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.34,WHEEL_R*0.34),cframe=CF(),color=Color3.fromRGB(108,116,124),material=Enum.Material.Metal},"x")
  cap.Parent=m
  local mark=Kit.part({name="TimingMark",size=V(WHEEL_W*1.16,WHEEL_R*0.3,0.2),cframe=CF(0,WHEEL_R*0.74,0),color=C.hiVis,material=Enum.Material.SmoothPlastic})
@@ -374,47 +374,74 @@ local function vehicle(parent,cf,kind,index)
  Env.settleVehicle(handle,cf.Position,cf.LookVector)
  return handle
 end
+-- Two slopes meet at a shared crest, with their lower faces buried in the
+-- substrate. Unlike superimposed wedges this has no vertical end at the crest.
+local function snowRidge(parent,cf,width,height,length)
+ for _,side in {-1,1} do
+  part(parent,"WindSnowRidge",V(width,height,length/2),
+   cf*CF(0,0,side*length/4)*A(0,side==1 and math.pi or 0,0),C.snow,Enum.Material.Snow,"wedge")
+ end
+end
 local function exterior(env,rng)
  local root=Kit.folder("ArcticLandscape",env.folder)
  local o=Env.Zones.BaseCenter
- -- Continuous substrate, buried under overlapping wind-carved ridges.
- part(root,"BuriedIceShelf",V(1100,18,1100),CF(o-V(0,12,0)),C.deep,Enum.Material.Ice)
- for x=-480,480,60 do for z=-420,480,60 do
-  local h=2+math.noise(x/150,z/150)*4
-  part(root,"WindSculptedSnow",V(90,8+h,92),CF(o+V(x,-4,z))*A(0,rng:NextNumber(-0.5,0.5),0),C.snow,Enum.Material.Snow,"ball")
- end end
- -- Keep the base and convoy corridor clear; detail is placed deliberately.
- for i=1,95 do
-  local x=rng:NextNumber(-95,95);local z=rng:NextNumber(-20,145)
+ -- Preserve the downstream set's seeded layout, including the interiors.
+ -- Consume the former surface's random draws without building its geometry.
+ local surfaceRng=rng:Clone()
+ for _=1,272 do rng:NextNumber(-0.5,0.5) end
+ for _=1,95 do
+  local x=rng:NextNumber(-95,95);rng:NextNumber(-20,145)
   if math.abs(x)>12 then
-   part(root,"Drift",V(rng:NextNumber(4,11),rng:NextNumber(1,3),rng:NextNumber(6,16)),CF(o+V(x,0.4,z))*A(0,-0.35,0),C.snow,Enum.Material.Snow,"ball")
+   rng:NextNumber(4,11);rng:NextNumber(1,3);rng:NextNumber(6,16)
   end
  end
- --[[
-  THE ROUTE. The single most important piece of storytelling in the exterior:
-  a viewer has to be able to see, in one frame, where the convoy came from and
-  where it is going. Four layers do that, from the ground up:
-
-    1. a graded roadbed - compacted, slightly darker, slightly sunken;
-    2. ploughed berms either side, which is what actually reads as "a road
-       somebody cut through a snowfield" rather than "a stripe painted on it";
-    3. twin tyre ruts down the middle, at the truck's real track width;
-    4. marker poles with orange flags, spaced to converge toward the base -
-       a perspective line that the eye follows straight to the destination.
-
-  The route runs +Z (far, where the convoy enters) to 0 (the base).
- ]]
+ for _=1,62 do rng:NextNumber(1.1,2.1) end
+ part(root,"BuriedIceShelf",V(1100,18,1100),CF(o-V(0,12,0)),C.deep,Enum.Material.Ice)
+ part(root,"PackedSnowField",V(1100,3,1100),CF(o-V(0,1.5,0)),C.snow,Enum.Material.Snow)
+ -- Broad, low wind relief outside the route and occupied base footprint.
+ for i=1,34 do
+  local side=i%2==0 and 1 or -1
+  local x=side*surfaceRng:NextNumber(55,240)
+  local z=surfaceRng:NextNumber(75,300)
+  local h=surfaceRng:NextNumber(0.3,1.4)
+  snowRidge(root,CF(o+V(x,h*0.25,z))*A(0,-0.35+surfaceRng:NextNumber(-0.12,0.12),0),
+   surfaceRng:NextNumber(8,24),h,surfaceRng:NextNumber(12,34))
+ end
  local ROUTE_HALF=7
- for z=6,186,6 do
-  part(root,"GradedRoadbed",V(ROUTE_HALF*2,0.5,6.2),CF(o+V(0,0.18,z)),C.ice:Lerp(C.snow,0.45),Enum.Material.Snow)
-  for _,side in {-1,1} do
-   local h=rng:NextNumber(1.1,2.1)
-   part(root,"PloughBerm",V(3.4,h,6.4),CF(o+V(side*(ROUTE_HALF+1.3),h*0.3,z))*A(0,side*0.06,side*0.1),C.snow,Enum.Material.Snow,"ball")
+ part(root,"GradedRoadbed",V(14,0.24,190),CF(o+V(0,0.13,97)),C.ice:Lerp(C.snow,0.45),Enum.Material.Snow)
+ for _,x in {-2.9,2.9} do
+  --[[
+   A rut, not a painted line. One 184-stud bar is a perfectly straight,
+   perfectly even stripe - the graphic-decal read this pass exists to remove -
+   and a row of short tread marks is the tiled read it replaced. So: FIVE long
+   overlapping segments, each wandering a little in width and a little across
+   the roadbed, which is what a vehicle repeatedly following roughly the same
+   line actually leaves. They overlap by design, so the rut never breaks.
+  ]]
+  local z=6
+  while z<190 do
+   local length=surfaceRng:NextNumber(34,46)
+   part(root,"TyreTrack",V(surfaceRng:NextNumber(0.95,1.2),0.04,length+3),
+    CF(o+V(x+surfaceRng:NextNumber(-0.22,0.22),0.28,z+length/2))*A(0,surfaceRng:NextNumber(-0.01,0.01),0),
+    C.ice:Lerp(C.deep,0.2):Lerp(C.snow,0.35),Enum.Material.Snow)
+   z+=length
+  end
+  -- Sparse feathered shoulders, irregular in length and spacing, soften the
+  -- rut's edge without a repeated tread/decal pattern.
+  for i=1,9 do
+   local at=10+i*18+surfaceRng:NextNumber(-5,5)
+   part(root,"TrackWear",V(surfaceRng:NextNumber(1.2,1.6),0.025,surfaceRng:NextNumber(3,10)),
+    CF(o+V(x+surfaceRng:NextNumber(-0.12,0.12),0.265,at))*A(0,surfaceRng:NextNumber(-0.018,0.018),0),C.ice:Lerp(C.snow,0.38),Enum.Material.Snow,"wedge")
   end
  end
- for z=8,188,1.6 do for _,x in {-2.9,2.9} do
-  part(root,"TyreRut",V(1.25,0.06,0.62),CF(o+V(x,0.4,z)),C.ice,Enum.Material.Snow)
- end end
+ -- Plough piles begin outside the gate; the apron remains open to both sides.
+ for _,side in {-1,1} do
+  for i=1,5 do
+   local h=surfaceRng:NextNumber(0.35,0.75)
+   snowRidge(root,CF(o+V(side*8.4,h*0.25,66+(i-1)*29))*A(0,math.pi/2,0),
+    surfaceRng:NextNumber(29,35),h,surfaceRng:NextNumber(2.4,3.2))
+  end
+ end
  -- Marker poles. Every fourth carries a small warm beacon, so at a distance
  -- the route reads as a dotted line of lights even before the base is legible.
  local GATE_Z=52
@@ -448,16 +475,28 @@ local function exterior(env,rng)
   across a field. Two masts, a lit sign, a boom and a guard box: the moment
   the trucks pass this, the audience knows they have arrived.
  ]]
+ --[[
+  Grouped, because the arrival crane has to be able to say "the gate belongs in
+  front of the convoy". It does: the whole point of the shot is watching the
+  trucks drive THROUGH this. Measured in Studio, the sign crossed the sightline
+  for two frames as the lead truck passed under it, Camera.applyShot found the
+  framing blocked, collapsed it, and then held a 54-degree orbit for the
+  remaining third of the take - one deliberate crane turning into two shots,
+  from two frames of an object the shot is deliberately shooting past. That is
+  exactly what `shot.foreground` exists for.
+ ]]
+ local gate=Kit.model("Gate",root)
  for _,side in {-1,1} do
-  Kit.beam(root,"GateMast",o+V(side*(ROUTE_HALF+1),0,GATE_Z),o+V(side*(ROUTE_HALF+1),9,GATE_Z),0.5,C.metal)
-  lamp(root,CF(o+V(side*(ROUTE_HALF+0.4),8.2,GATE_Z+0.6))*A(-0.5,0,0),C.warm,26,1.6)
+  Kit.beam(gate,"GateMast",o+V(side*(ROUTE_HALF+1),0,GATE_Z),o+V(side*(ROUTE_HALF+1),9,GATE_Z),0.5,C.metal)
+  lamp(gate,CF(o+V(side*(ROUTE_HALF+0.4),8.2,GATE_Z+0.6))*A(-0.5,0,0),C.warm,26,1.6)
  end
- Kit.beam(root,"GateSpan",o+V(-(ROUTE_HALF+1),8.6,GATE_Z),o+V(ROUTE_HALF+1,8.6,GATE_Z),0.4,C.metal)
- local gateSign=part(root,"GateSign",V(11,2.1,0.24),CF(o+V(0,7.2,GATE_Z+0.2)),C.hullDark)
+ Kit.beam(gate,"GateSpan",o+V(-(ROUTE_HALF+1),8.6,GATE_Z),o+V(ROUTE_HALF+1,8.6,GATE_Z),0.4,C.metal)
+ local gateSign=part(gate,"GateSign",V(11,2.1,0.24),CF(o+V(0,7.2,GATE_Z+0.2)),C.hullDark)
  Kit.label(gateSign,"ARCTIC EXPEDITION SEVEN\n88° N  ·  RESTRICTED",C.hiVis)
- part(root,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-1.5,2.2,GATE_Z-1.8))*A(0,0,math.rad(-62)),C.hiVis)
- part(root,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-5.6,1.2,GATE_Z-1.8)),C.hullDark)
- local shack=Kit.model("GateHut",root)
+ part(gate,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-7.2,5.6,GATE_Z-1.8))*A(0,0,math.rad(-90)),C.hiVis)
+ part(gate,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-7.2,1.2,GATE_Z-1.8)),C.hullDark)
+ env.gate=gate
+ local shack=Kit.model("GateHut",gate)
  part(shack,"Hut",V(3.4,3.4,3.2),CF(o+V(ROUTE_HALF+3.4,1.9,GATE_Z-3)),C.hull)
  part(shack,"HutRoof",V(3.9,0.3,3.7),CF(o+V(ROUTE_HALF+3.4,3.7,GATE_Z-3)),C.hullDark)
  part(shack,"HutWindow",V(0.12,1.2,2),CF(o+V(ROUTE_HALF+1.7,2.4,GATE_Z-3)),C.warm,Enum.Material.Neon,nil,0.35)
@@ -468,11 +507,22 @@ local function exterior(env,rng)
   stop, with painted bays. Without it the trucks park on open snow at
   arbitrary angles and the site has no "here is where you arrive" beat.
  ]]
- part(root,"ArrivalApron",V(46,0.4,30),CF(o+V(4,0.2,28)),C.ice:Lerp(C.snow,0.3),Enum.Material.Snow)
- for i=-1,1 do
-  part(root,"ApronBayLine",V(0.3,0.06,16),CF(o+V(4+i*9,0.42,28)),C.hiVis,Enum.Material.SmoothPlastic)
+ --[[
+  Graded snow, not a blue mat. At a 0.22 lerp off C.ice this pad was far bluer
+  than both the roadbed feeding it (0.45) and the snowfield around it, so from
+  the arrival crane it read as a rectangle of water dropped into the set - the
+  single most "procedural toy map" thing in frame. It is the same compacted
+  surface as the road, swept a little cleaner, so it sits just to the SNOW side
+  of the roadbed and the two now read as one continuous graded area.
+ ]]
+ part(root,"ArrivalApron",V(52,0.35,44),CF(o+V(4,0.18,27)),C.ice:Lerp(C.snow,0.5),Enum.Material.Snow)
+ -- Edge markers leave the full central lane clear, including at the gate.
+ for _,x in {-6,7} do
+  part(root,"ApronBayLine",V(0.18,0.04,32),CF(o+V(x,0.375,27)),C.hiVis,Enum.Material.SmoothPlastic)
  end
- part(root,"ApronKerb",V(46,0.5,0.6),CF(o+V(4,0.4,43)),C.hiVis)
+ for _,x in {-14.5,18.5} do
+  part(root,"ApronKerb",V(15,0.5,0.6),CF(o+V(x,0.4,49)),C.hiVis)
+ end
  for ring=1,3 do for i=1,24 do
   local angle=i/24*math.pi*2
   local radius=260+ring*65
@@ -496,7 +546,13 @@ local function exterior(env,rng)
  ]]
  for i=1,14 do
   local side=i%2==0 and 1 or -1
-  local x=side*rng:NextNumber(26,76)
+  -- Inner edge clears the corridor. At 26 studs out with a width of up to 34,
+  -- a ridge reached x=9 - two studs off the roadbed's own edge and fifteen
+  -- studs tall, which is a canyon wall, not relief, and it is what put
+  -- 01_BlackRadio's low lens behind a wall of ice for its whole length. From
+  -- 44 the nearest face is 27 studs out. ONE draw, same position in the
+  -- sequence, so nothing downstream of this loop shifts.
+  local x=side*rng:NextNumber(44,92)
   local z=118+i*6.5+rng:NextNumber(-6,6)
   local h=rng:NextNumber(9,21)
   part(root,"NearIceRidge",V(rng:NextNumber(18,34),h,rng:NextNumber(20,40)),CF(o+V(x,h*0.34-3,z))*A(0,rng:NextNumber(-0.6,0.6),side*0.09),C.ice:Lerp(C.snow,rng:NextNumber(0.3,0.8)),Enum.Material.Ice,"wedge")
@@ -589,8 +645,8 @@ local function exterior(env,rng)
   {at=V(0,1.6,150),yaw=0},
   {at=V(0,1.6,178),yaw=0},
   {at=V(0,1.6,-23),yaw=0},
-  {at=V(-5,1.6,26),yaw=math.rad(96)},
-  {at=V(13,1.6,26),yaw=math.rad(96)},
+  {at=V(-10.5,1.6,22),yaw=0},
+  {at=V(16,1.6,22),yaw=math.rad(96)},
  }
  for i,kind in kinds do
   local placement=placements[i]
@@ -1084,9 +1140,8 @@ end
 -- Ground sampling and vehicle motion.
 --
 -- Every height in the Arctic set comes from a raycast against the set itself,
--- never from a constant: the exterior floor is a field of overlapping snow
--- balls whose surface varies by several studs, so any hardcoded Y is wrong
--- somewhere. This is the same mechanism Cast.lua grounds its people with.
+-- never from a constant: packed snow, apron and wind ridges have different
+-- surface heights. This is the same mechanism Cast.lua grounds its people with.
 --------------------------------------------------------------------------------
 
 local groundParams=RaycastParams.new()

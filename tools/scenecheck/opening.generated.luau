@@ -229,15 +229,23 @@ R.NumberSequence={new=function(v) return {Value=v} end}
 R.ColorSequence={new=function(v) return {Value=v} end}
 R.RaycastParams={new=function() return {FilterType=nil,FilterDescendantsInstances={},IgnoreWater=false} end}
 R.OverlapParams={new=function() return {FilterType=nil,FilterDescendantsInstances={},MaxParts=0} end}
-R.Random={new=function(seed)
+-- Clone is a real Random method: it returns an independent generator carrying
+-- the source's CURRENT state, so both continue the same sequence separately.
+-- Env.lua uses it to keep the seeded set layout stable while re-authoring the
+-- geometry that used to consume those draws.
+local function makeRandom(seed)
  local state=seed or 0
+ local self
  local function next()
   state=(1103515245*state+12345)%2147483648
   return state/2147483648
  end
- return {NextNumber=function(_,a,b) local v=next() if a==nil then return v end return a+(b-a)*v end,
-  NextInteger=function(_,a,b) return a+math.floor(next()*(b-a+1)) end}
-end}
+ self={NextNumber=function(_,a,b) local v=next() if a==nil then return v end return a+(b-a)*v end,
+  NextInteger=function(_,a,b) return a+math.floor(next()*(b-a+1)) end,
+  Clone=function() return makeRandom(state) end}
+ return self
+end
+R.Random={new=makeRandom}
 
 --------------------------------------------------------------------------------
 -- Instances
@@ -424,8 +432,87 @@ R.useSolids=false
 
 local workspaceInstance=R.newInstance("Workspace")
 rawset(workspaceInstance,"Name","Workspace")
+--[[
+ An OBLIQUE ray is a real ray, not a ground probe.
+
+ RaycastSolids below answers "what surface is under this point", which is what
+ Cast.floorUnder and Env.surfaceY want and is why it is fast enough to run
+ thousands of times a harness. It is the wrong answer for the one caller that
+ asks a different question: Camera.inspect's obstruction test, which fires a
+ long, shallow ray from a lens toward a subject. Read as a vertical probe, a
+ lens standing over ANY raised geometry reports blocked, so every exterior shot
+ that looks down at its subject - which the Arctic arrival does for its whole
+ length - was reported obstructed. Camera.applyShot then orbited away from the
+ authored framing and CACHED that correction for the rest of the take, so the
+ scenecheck frames showed a camera nobody wrote.
+
+ So: near-vertical rays keep the fast column probe, and anything else gets a
+ real segment-vs-box sweep. That split is what keeps the cost off the ground
+ queries, which are the thousands; camera rays are a few thousand in total.
+ A rotated box is tested as its world AABB - conservative, but enormously
+ tighter than "anything in the column below it".
+]]
+local function segmentHitsSolids(origin,direction,params)
+ local exclude={}
+ if params and params.FilterDescendantsInstances then
+  for _,item in params.FilterDescendantsInstances do exclude[item]=true end
+ end
+ local best,bestSolid=nil,nil
+ for _,solid in R.solids do
+  -- CanQuery=false is how this set opts thin trim (marker flags, wheel-arch
+  -- flares, mud flaps) out of camera queries; a shim that ignores it reports
+  -- obstructions the engine would never report.
+  if rawget(solid,"Transparency")<0.65 and rawget(solid,"CanQuery")~=false then
+   local skip=false
+   local node=solid
+   while node do
+    if exclude[node] then skip=true break end
+    node=rawget(node,"Parent")
+   end
+   if not skip then
+    local attached,walk=false,solid
+    while walk do
+     if walk==workspaceInstance then attached=true break end
+     walk=rawget(walk,"Parent")
+    end
+    skip=not attached
+   end
+   if not skip then
+    local cf=rawget(solid,"CFrame")
+    local size=rawget(solid,"Size")
+    local p=cf.p
+    -- World AABB of the (possibly rotated) box.
+    local hx=math.abs(cf.xv[1])*size[1]/2+math.abs(cf.yv[1])*size[2]/2+math.abs(cf.zv[1])*size[3]/2
+    local hy=math.abs(cf.xv[2])*size[1]/2+math.abs(cf.yv[2])*size[2]/2+math.abs(cf.zv[2])*size[3]/2
+    local hz=math.abs(cf.xv[3])*size[1]/2+math.abs(cf.yv[3])*size[2]/2+math.abs(cf.zv[3])*size[3]/2
+    -- Slab test over the segment t in [0,1].
+    local lo,hi=0,1
+    for axis,half in {hx,hy,hz} do
+     local o,d,c=origin[axis],direction[axis],p[axis]
+     if math.abs(d)<1e-9 then
+      if math.abs(o-c)>half then lo=2 break end
+     else
+      local t1,t2=(c-half-o)/d,(c+half-o)/d
+      if t1>t2 then t1,t2=t2,t1 end
+      if t1>lo then lo=t1 end
+      if t2<hi then hi=t2 end
+      if lo>hi then lo=2 break end
+     end
+    end
+    if lo<=hi and lo<=1 and hi>=0 and (best==nil or lo<best) then best,bestSolid=lo,solid end
+   end
+  end
+ end
+ if best==nil then return nil end
+ return {Position=Vector3.new(origin.X+direction.X*best,origin.Y+direction.Y*best,origin.Z+direction.Z*best),
+  Instance=bestSolid,Normal=Vector3.new(0,1,0)}
+end
 function workspaceInstance:Raycast(origin,direction,params)
  R.rayCount+=1
+ local length=direction.Magnitude
+ if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.9 then
+  return segmentHitsSolids(origin,direction,params)
+ end
  if direction.Y>=0 then return nil end
  local hitY=nil
  if R.useSolids then hitY=self:RaycastSolids(origin,direction,params) end
@@ -1815,7 +1902,7 @@ local function buildWheel(parent,name)
  end
  -- A small hub, and one hi-vis timing mark out near the rim. The mark is what
  -- makes a slow roll legible: with it, a quarter turn is obvious in a still
- -- frame, which is the actual acceptance test for 03b_WheelContact.
+ -- frame, and remains legible during the convoy arrival.
  local cap=Kit.cylinder({name="HubCap",size=V(WHEEL_W*1.2,WHEEL_R*0.34,WHEEL_R*0.34),cframe=CF(),color=Color3.fromRGB(108,116,124),material=Enum.Material.Metal},"x")
  cap.Parent=m
  local mark=Kit.part({name="TimingMark",size=V(WHEEL_W*1.16,WHEEL_R*0.3,0.2),cframe=CF(0,WHEEL_R*0.74,0),color=C.hiVis,material=Enum.Material.SmoothPlastic})
@@ -2002,47 +2089,74 @@ local function vehicle(parent,cf,kind,index)
  Env.settleVehicle(handle,cf.Position,cf.LookVector)
  return handle
 end
+-- Two slopes meet at a shared crest, with their lower faces buried in the
+-- substrate. Unlike superimposed wedges this has no vertical end at the crest.
+local function snowRidge(parent,cf,width,height,length)
+ for _,side in {-1,1} do
+  part(parent,"WindSnowRidge",V(width,height,length/2),
+   cf*CF(0,0,side*length/4)*A(0,side==1 and math.pi or 0,0),C.snow,Enum.Material.Snow,"wedge")
+ end
+end
 local function exterior(env,rng)
  local root=Kit.folder("ArcticLandscape",env.folder)
  local o=Env.Zones.BaseCenter
- -- Continuous substrate, buried under overlapping wind-carved ridges.
- part(root,"BuriedIceShelf",V(1100,18,1100),CF(o-V(0,12,0)),C.deep,Enum.Material.Ice)
- for x=-480,480,60 do for z=-420,480,60 do
-  local h=2+math.noise(x/150,z/150)*4
-  part(root,"WindSculptedSnow",V(90,8+h,92),CF(o+V(x,-4,z))*A(0,rng:NextNumber(-0.5,0.5),0),C.snow,Enum.Material.Snow,"ball")
- end end
- -- Keep the base and convoy corridor clear; detail is placed deliberately.
- for i=1,95 do
-  local x=rng:NextNumber(-95,95);local z=rng:NextNumber(-20,145)
+ -- Preserve the downstream set's seeded layout, including the interiors.
+ -- Consume the former surface's random draws without building its geometry.
+ local surfaceRng=rng:Clone()
+ for _=1,272 do rng:NextNumber(-0.5,0.5) end
+ for _=1,95 do
+  local x=rng:NextNumber(-95,95);rng:NextNumber(-20,145)
   if math.abs(x)>12 then
-   part(root,"Drift",V(rng:NextNumber(4,11),rng:NextNumber(1,3),rng:NextNumber(6,16)),CF(o+V(x,0.4,z))*A(0,-0.35,0),C.snow,Enum.Material.Snow,"ball")
+   rng:NextNumber(4,11);rng:NextNumber(1,3);rng:NextNumber(6,16)
   end
  end
- --[[
-  THE ROUTE. The single most important piece of storytelling in the exterior:
-  a viewer has to be able to see, in one frame, where the convoy came from and
-  where it is going. Four layers do that, from the ground up:
-
-    1. a graded roadbed - compacted, slightly darker, slightly sunken;
-    2. ploughed berms either side, which is what actually reads as "a road
-       somebody cut through a snowfield" rather than "a stripe painted on it";
-    3. twin tyre ruts down the middle, at the truck's real track width;
-    4. marker poles with orange flags, spaced to converge toward the base -
-       a perspective line that the eye follows straight to the destination.
-
-  The route runs +Z (far, where the convoy enters) to 0 (the base).
- ]]
+ for _=1,62 do rng:NextNumber(1.1,2.1) end
+ part(root,"BuriedIceShelf",V(1100,18,1100),CF(o-V(0,12,0)),C.deep,Enum.Material.Ice)
+ part(root,"PackedSnowField",V(1100,3,1100),CF(o-V(0,1.5,0)),C.snow,Enum.Material.Snow)
+ -- Broad, low wind relief outside the route and occupied base footprint.
+ for i=1,34 do
+  local side=i%2==0 and 1 or -1
+  local x=side*surfaceRng:NextNumber(55,240)
+  local z=surfaceRng:NextNumber(75,300)
+  local h=surfaceRng:NextNumber(0.3,1.4)
+  snowRidge(root,CF(o+V(x,h*0.25,z))*A(0,-0.35+surfaceRng:NextNumber(-0.12,0.12),0),
+   surfaceRng:NextNumber(8,24),h,surfaceRng:NextNumber(12,34))
+ end
  local ROUTE_HALF=7
- for z=6,186,6 do
-  part(root,"GradedRoadbed",V(ROUTE_HALF*2,0.5,6.2),CF(o+V(0,0.18,z)),C.ice:Lerp(C.snow,0.45),Enum.Material.Snow)
-  for _,side in {-1,1} do
-   local h=rng:NextNumber(1.1,2.1)
-   part(root,"PloughBerm",V(3.4,h,6.4),CF(o+V(side*(ROUTE_HALF+1.3),h*0.3,z))*A(0,side*0.06,side*0.1),C.snow,Enum.Material.Snow,"ball")
+ part(root,"GradedRoadbed",V(14,0.24,190),CF(o+V(0,0.13,97)),C.ice:Lerp(C.snow,0.45),Enum.Material.Snow)
+ for _,x in {-2.9,2.9} do
+  --[[
+   A rut, not a painted line. One 184-stud bar is a perfectly straight,
+   perfectly even stripe - the graphic-decal read this pass exists to remove -
+   and a row of short tread marks is the tiled read it replaced. So: FIVE long
+   overlapping segments, each wandering a little in width and a little across
+   the roadbed, which is what a vehicle repeatedly following roughly the same
+   line actually leaves. They overlap by design, so the rut never breaks.
+  ]]
+  local z=6
+  while z<190 do
+   local length=surfaceRng:NextNumber(34,46)
+   part(root,"TyreTrack",V(surfaceRng:NextNumber(0.95,1.2),0.04,length+3),
+    CF(o+V(x+surfaceRng:NextNumber(-0.22,0.22),0.28,z+length/2))*A(0,surfaceRng:NextNumber(-0.01,0.01),0),
+    C.ice:Lerp(C.deep,0.2):Lerp(C.snow,0.35),Enum.Material.Snow)
+   z+=length
+  end
+  -- Sparse feathered shoulders, irregular in length and spacing, soften the
+  -- rut's edge without a repeated tread/decal pattern.
+  for i=1,9 do
+   local at=10+i*18+surfaceRng:NextNumber(-5,5)
+   part(root,"TrackWear",V(surfaceRng:NextNumber(1.2,1.6),0.025,surfaceRng:NextNumber(3,10)),
+    CF(o+V(x+surfaceRng:NextNumber(-0.12,0.12),0.265,at))*A(0,surfaceRng:NextNumber(-0.018,0.018),0),C.ice:Lerp(C.snow,0.38),Enum.Material.Snow,"wedge")
   end
  end
- for z=8,188,1.6 do for _,x in {-2.9,2.9} do
-  part(root,"TyreRut",V(1.25,0.06,0.62),CF(o+V(x,0.4,z)),C.ice,Enum.Material.Snow)
- end end
+ -- Plough piles begin outside the gate; the apron remains open to both sides.
+ for _,side in {-1,1} do
+  for i=1,5 do
+   local h=surfaceRng:NextNumber(0.35,0.75)
+   snowRidge(root,CF(o+V(side*8.4,h*0.25,66+(i-1)*29))*A(0,math.pi/2,0),
+    surfaceRng:NextNumber(29,35),h,surfaceRng:NextNumber(2.4,3.2))
+  end
+ end
  -- Marker poles. Every fourth carries a small warm beacon, so at a distance
  -- the route reads as a dotted line of lights even before the base is legible.
  local GATE_Z=52
@@ -2083,8 +2197,8 @@ local function exterior(env,rng)
  Kit.beam(root,"GateSpan",o+V(-(ROUTE_HALF+1),8.6,GATE_Z),o+V(ROUTE_HALF+1,8.6,GATE_Z),0.4,C.metal)
  local gateSign=part(root,"GateSign",V(11,2.1,0.24),CF(o+V(0,7.2,GATE_Z+0.2)),C.hullDark)
  Kit.label(gateSign,"ARCTIC EXPEDITION SEVEN\n88° N  ·  RESTRICTED",C.hiVis)
- part(root,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-1.5,2.2,GATE_Z-1.8))*A(0,0,math.rad(-62)),C.hiVis)
- part(root,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-5.6,1.2,GATE_Z-1.8)),C.hullDark)
+ part(root,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-7.2,5.6,GATE_Z-1.8))*A(0,0,math.rad(-90)),C.hiVis)
+ part(root,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-7.2,1.2,GATE_Z-1.8)),C.hullDark)
  local shack=Kit.model("GateHut",root)
  part(shack,"Hut",V(3.4,3.4,3.2),CF(o+V(ROUTE_HALF+3.4,1.9,GATE_Z-3)),C.hull)
  part(shack,"HutRoof",V(3.9,0.3,3.7),CF(o+V(ROUTE_HALF+3.4,3.7,GATE_Z-3)),C.hullDark)
@@ -2096,11 +2210,22 @@ local function exterior(env,rng)
   stop, with painted bays. Without it the trucks park on open snow at
   arbitrary angles and the site has no "here is where you arrive" beat.
  ]]
- part(root,"ArrivalApron",V(46,0.4,30),CF(o+V(4,0.2,28)),C.ice:Lerp(C.snow,0.3),Enum.Material.Snow)
- for i=-1,1 do
-  part(root,"ApronBayLine",V(0.3,0.06,16),CF(o+V(4+i*9,0.42,28)),C.hiVis,Enum.Material.SmoothPlastic)
+ --[[
+  Graded snow, not a blue mat. At a 0.22 lerp off C.ice this pad was far bluer
+  than both the roadbed feeding it (0.45) and the snowfield around it, so from
+  the arrival crane it read as a rectangle of water dropped into the set - the
+  single most "procedural toy map" thing in frame. It is the same compacted
+  surface as the road, swept a little cleaner, so it sits just to the SNOW side
+  of the roadbed and the two now read as one continuous graded area.
+ ]]
+ part(root,"ArrivalApron",V(52,0.35,44),CF(o+V(4,0.18,27)),C.ice:Lerp(C.snow,0.5),Enum.Material.Snow)
+ -- Edge markers leave the full central lane clear, including at the gate.
+ for _,x in {-6,7} do
+  part(root,"ApronBayLine",V(0.18,0.04,32),CF(o+V(x,0.375,27)),C.hiVis,Enum.Material.SmoothPlastic)
  end
- part(root,"ApronKerb",V(46,0.5,0.6),CF(o+V(4,0.4,43)),C.hiVis)
+ for _,x in {-14.5,18.5} do
+  part(root,"ApronKerb",V(15,0.5,0.6),CF(o+V(x,0.4,49)),C.hiVis)
+ end
  for ring=1,3 do for i=1,24 do
   local angle=i/24*math.pi*2
   local radius=260+ring*65
@@ -2217,8 +2342,8 @@ local function exterior(env,rng)
   {at=V(0,1.6,150),yaw=0},
   {at=V(0,1.6,178),yaw=0},
   {at=V(0,1.6,-23),yaw=0},
-  {at=V(-5,1.6,26),yaw=math.rad(96)},
-  {at=V(13,1.6,26),yaw=math.rad(96)},
+  {at=V(-10.5,1.6,22),yaw=0},
+  {at=V(16,1.6,22),yaw=math.rad(96)},
  }
  for i,kind in kinds do
   local placement=placements[i]
@@ -2350,16 +2475,39 @@ local function commandRoom(env,rng)
   part(room,"IslandFloorMark",V(0.22,0.06,8),at(side*5.4,0.04,-3.6),C.hiVis,Enum.Material.SmoothPlastic)
  end
 
- -- The focal point ----------------------------------------------------------
- part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-6.4),C.labWallDark)
- env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-6.4)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
- part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-6.55)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  The focal point.
+
+  Stood back from z=-6.4 to -9.2. At the old depth the panel was only about
+  six studs beyond the people working at the island, and all three of them
+  face it - so every reverse angle in the scene was taken from BEHIND it.
+  Measured in Studio, the dialogue mediums for Lyra and Voss put the lens at
+  z=-6.5, a fifth of a stud past the screen, and the camera's obstruction
+  correction had to swing every one of those shots around it.
+
+  Three studs further back and the same framing clears the panel by over a
+  stud and a half, the room gets a deeper background behind the cast, and the
+  screen is still the thing they are all looking at.
+ ]]
+ part(room,"DisplayMount",V(1,2.2,1),at(0,1.6,-9.2),C.labWallDark)
+ env.signalDisplay=part(room,"SignalDisplay",V(7,3,0.25),at(0,4.6,-9.2)*A(-0.16,0,0),C.deep,Enum.Material.Glass)
+ part(room,"SignalDisplayBezel",V(7.5,3.5,0.18),at(0,4.6,-9.35)*A(-0.16,0,0),C.labWallDark)
+ --[[
+  ON THE ROOM SIDE of the panel.
+
+  The display is built with no yaw, so its local -Z (which is what Roblox
+  calls a part's Front, and what Kit.label defaults to) points AWAY from the
+  people standing at the island. The three pulse bars were mounted at local
+  z=-0.18 and the printed marking on Front, so both of them were on the back
+  of the screen: the shot that exists to show the returning signal rendered as
+  a blank blue sheet, which is exactly what it looked like in Studio.
+ ]]
  env.pulses={}
  for i=1,3 do
-  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,-0.18),C.cyan,Enum.Material.Neon)
+  local pulse=part(room,"RepeatingPulse",V(0.3,1.8,0.08),env.signalDisplay.CFrame*CF((i-2)*1.8,-0.2,0.18),C.cyan,Enum.Material.Neon)
   table.insert(env.pulses,pulse)
  end
- Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan)
+ Kit.label(env.signalDisplay,"07  /  SUBGLACIAL RETURN",C.cyan,Enum.NormalId.Back)
  -- The display's own spill, aimed into the room: this is the light that
  -- actually falls on Lyra's and Voss's faces while they read it.
  local spill=part(room,"DisplaySpill",V(0.3,0.3,0.3),at(0,4.8,-5.6),C.cyan,Enum.Material.Neon,nil,1)
@@ -2689,9 +2837,8 @@ end
 -- Ground sampling and vehicle motion.
 --
 -- Every height in the Arctic set comes from a raycast against the set itself,
--- never from a constant: the exterior floor is a field of overlapping snow
--- balls whose surface varies by several studs, so any hardcoded Y is wrong
--- somewhere. This is the same mechanism Cast.lua grounds its people with.
+-- never from a constant: packed snow, apron and wind ridges have different
+-- surface heights. This is the same mechanism Cast.lua grounds its people with.
 --------------------------------------------------------------------------------
 
 local groundParams=RaycastParams.new()
@@ -4230,7 +4377,26 @@ local Settings=require(script.Parent.Parent.Settings)
 local Camera={}
 local env
 local reported={}
-function Camera.configure(handle) env=handle;table.clear(reported) end
+--[[
+ A shot that had to be corrected remembers HOW, for as long as it is on screen.
+
+ The correction is re-tested every frame (the subject moves, so it has to be),
+ but without a memory it also re-DECIDES every frame, and the margins in a
+ crowded room are small enough that a listener's breathing is sometimes enough
+ to flip the answer. Studio caught exactly that on 06a_HaleReport: the shot
+ reported a clean orbit on its first frame and rendered, a second later, as a
+ head filling half the screen, because by then every candidate had failed and
+ the last resort had pulled the lens in to three studs.
+
+ Keyed by shot name and cleared per cinematic run. The stored value is a
+ STRATEGY, never a position, so a held correction still tracks a moving subject
+ instead of freezing the camera in place.
+]]
+local corrections={}
+-- A collapsed shot has no cached strategy to suppress its own warning, so the
+-- warning would otherwise repeat every frame for the length of the shot.
+local collapsedWarned={}
+function Camera.configure(handle) env=handle;table.clear(reported);table.clear(corrections);table.clear(collapsedWarned) end
 local function point(subject)
  if typeof(subject)=="Vector3" then return subject end
  if typeof(subject)=="Instance" and subject:IsA("BasePart") and subject.Parent then return subject.Position end
@@ -4268,7 +4434,7 @@ local function inside(pos,subject,allowed)
   local permitted=false
   if allowed then
    for _,item in allowed do
-    if hit==item or hit:IsDescendantOf(item) then permitted=true break end
+    if hit==item or hit:IsDescendantOf(item) then permitted=true; break end
    end
   end
   if hit.Transparency<0.65 and not permitted and not hit:IsDescendantOf(env.markers) and (not subjectModel or not hit:IsDescendantOf(subjectModel)) then return hit end
@@ -4305,6 +4471,45 @@ local function ease(pace,t)
  end
  return t*t*(3-2*t)
 end
+--[[
+ UNSTICKING, in order of how much of the shot it costs.
+
+ An earlier list tried three progressively closer positions along the same
+ blocked sightline, two sideways nudges, one upward nudge, and then gave up at
+ 1.5 studs from the subject's face. Every entry but the sideways pair kept the
+ SAME direction, so anything blocking the line - a display bezel, a ceiling
+ truss, a listener standing in the way - blocked most of the list too, and the
+ shot ended as an enormous close-up. Measured in Studio, four of the command
+ room's shots were being played at 1.4-1.5 studs instead of their authored
+ 6.8-8.2.
+
+ So: try to keep the shot first. An ORBIT preserves the subject's size in frame
+ exactly - it is still a medium, just from a few degrees round - and a RISE
+ looks over whatever is in the way rather than around it, which is usually the
+ right answer when the obstruction is a person. Only when neither works at any
+ angle does this start giving up distance.
+
+ The orbit is capped at 54 degrees, not further: past about sixty the lens has
+ crossed to the other side of the speaker, which breaks the shot/reverse-shot
+ side Sequences.speakerSide maintains and makes a conversation read as two
+ people who have swapped places between cuts.
+]]
+local STRATEGIES={
+ {kind="orbit",value=16},{kind="orbit",value=-16},
+ {kind="rise",value=1.6},{kind="rise",value=-1.6},
+ {kind="orbit",value=32},{kind="orbit",value=-32},
+ {kind="rise",value=2.9},{kind="rise",value=-2.9},
+ {kind="orbit",value=54},{kind="orbit",value=-54},
+ {kind="pull",value=0.78},{kind="pull",value=0.6},{kind="pull",value=0.44},
+}
+local function strategyPoint(strategy,focus,offset)
+ if strategy.kind=="orbit" then
+  return focus+(CFrame.fromAxisAngle(Vector3.yAxis,math.rad(strategy.value))*offset.Unit)*offset.Magnitude
+ elseif strategy.kind=="rise" then
+  return focus+offset+Vector3.new(0,strategy.value,0)
+ end
+ return focus+offset*strategy.value
+end
 function Camera.applyShot(shot,alpha,elapsed)
  local camera=workspace.CurrentCamera
  local subject=shot.subject()
@@ -4322,50 +4527,52 @@ function Camera.applyShot(shot,alpha,elapsed)
  local allowed=shot.foreground
  local original=Camera.inspect(shot.name,subject,pos,focus,allowed)
  local corrected=nil
- if not original.passed and (original.blocked or original.inside) then
-  --[[
-   UNSTICKING, in order of how much of the shot it costs.
-
-   The previous list tried three progressively closer positions along the
-   same blocked sightline, two sideways nudges, one upward nudge, and then
-   gave up at 1.5 studs from the subject's face. Every entry but the sideways
-   pair kept the SAME direction, so anything blocking the line - a display
-   bezel, a ceiling truss, a desk - blocked most of the list too, and the
-   shot ended as an enormous close-up. That close-up is what a viewer
-   actually saw: measured in Studio, four of the command room's shots were
-   being played at 1.4-1.5 studs instead of their authored 6.8-8.2.
-
-   So: try to keep the shot first. Orbiting the same offset around the focus
-   preserves the subject's size in frame exactly - it is still a medium, just
-   from a few degrees round - and only when no angle at all is clear does
-   this start giving up distance. Down is tried before up, because an
-   interior lens is far more often below a ceiling, a truss or a cable tray
-   than above a floor.
-  ]]
-  local distance=offset.Magnitude
-  local direction=offset.Unit
-  local candidates={}
-  for _,degrees in {16,-16,32,-32,54,-54,78,-78} do
-   table.insert(candidates,focus+(CFrame.fromAxisAngle(Vector3.yAxis,math.rad(degrees))*direction)*distance)
-  end
-  for _,rise in {-1.5,-2.8,1.5,2.8} do
-   table.insert(candidates,focus+direction*distance+Vector3.new(0,rise,0))
-  end
-  for _,scale in {0.78,0.6,0.44} do
-   table.insert(candidates,focus+offset*scale)
-  end
-  local resolved=false
-  for _,candidate in candidates do
-   if not inside(candidate,subject,allowed) and not obstruction(candidate,focus,subject,allowed) and (candidate-focus).Magnitude>1 then
-    pos=candidate;resolved=true;break
+ local function usable(candidate)
+  return not inside(candidate,subject,allowed)
+   and not obstruction(candidate,focus,subject,allowed)
+   and (candidate-focus).Magnitude>1
+ end
+ --[[
+  Once a shot has been corrected it STAYS corrected for the rest of the take,
+  even on a frame where the original angle happens to clear again. A lens that
+  snaps back to the authored angle mid-line is a cut, and a cut in the middle
+  of a shot reads worse than holding a slightly compromised one.
+ ]]
+ local held=corrections[shot.name]
+ if held then
+  local candidate=strategyPoint(held,focus,offset)
+  if usable(candidate) then pos=candidate;corrected=held.kind.."(held)" end
+ end
+ if not corrected and not original.passed and (original.blocked or original.inside) then
+  local resolved=nil
+  for _,strategy in STRATEGIES do
+   local candidate=strategyPoint(strategy,focus,offset)
+   if usable(candidate) then
+    corrections[shot.name]=strategy;resolved=candidate;corrected=strategy.kind
+    -- Said out loud the moment it happens. The report below prints once, on a
+    -- shot's FIRST frame, so a shot that starts clean and is obstructed a
+    -- second later - which is what a listener breathing into the sightline
+    -- does - used to degrade completely silently.
+    if RunService:IsStudio() then
+     warn(`[OpeningCamera] {shot.name} corrected mid-shot: {strategy.kind} {strategy.value}`)
+    end
+    break
    end
   end
-  -- Every candidate still blocked or embedded. Never render from inside
-  -- geometry: pull in along the shot's own direction as a last resort, but
-  -- no closer than three studs - closer than that is a nostril shot, which
-  -- is worse than the obstruction it is avoiding.
-  if not resolved then pos=focus+direction*math.max(3,distance*0.3) end
-  corrected=resolved and "orbited" or "collapsed"
+  if resolved then
+   pos=resolved
+  else
+   -- Every strategy still blocked or embedded. Never render from inside
+   -- geometry: pull in along the shot's own direction as a last resort, but
+   -- no closer than three studs - closer than that is a nostril shot, which
+   -- is worse than the obstruction it is avoiding.
+   pos=focus+offset.Unit*math.max(3,offset.Magnitude*0.3)
+   corrected="collapsed"
+   if RunService:IsStudio() and not collapsedWarned[shot.name] then
+    collapsedWarned[shot.name]=true
+    warn(`[OpeningCamera] {shot.name} COLLAPSED: no angle clear, framing abandoned`)
+   end
+  end
  end
  camera.CameraType=Enum.CameraType.Scriptable
  camera.FieldOfView=shot.fov or 48
@@ -4552,7 +4759,11 @@ function Sequences.build(env,c,ui): {Shot}
  local byName={[N.Lyra]=c.lyra,[N.Voss]=c.voss,[N.Hale]=c.hale,[N.Soldier]=c.soldiers[1]}
  local function add(name,duration,subject,from,options)
   local op=options or {}
-  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
+  -- `foreground` is the shot's own list of things that are ALLOWED to pass
+  -- between the lens and the subject (see Camera.lua's `allowed`). Without it
+  -- an object the shot is deliberately shooting past reads as an obstruction
+  -- and the camera corrects away from the framing that was the point.
+  local shot={name=name,duration=duration,subject=subject,from=from,to=op.to or from,fov=op.fov or 46,focusOffset=op.focusOffset,handheld=op.handheld,foreground=op.foreground,pace=op.pace or (op.handheld and "Fast") or nil,primarySubject=op.primary or name,secondarySubject=op.secondary or "Expedition",purpose=op.purpose or name,transition=op.transition or "Cut",lighting=op.light or "Chamber",expression=op.expression or "Focused",black=op.black}
   shot.enter=function()
    if op.stage then stage(op.stage) end
    ui.setSubtitle(nil,"");ui.setTitleCard(nil);ui.setBlackout(op.black and 0 or 1)
@@ -4740,16 +4951,22 @@ function Sequences.build(env,c,ui): {Shot}
   end
   return shot
  end
- --[[
-  ARRIVAL, shots 01-06. The job of this stretch is four facts, in order:
-  somebody is out here (radio over black), it is enormous and empty (high
-  wide), they are DRIVING - real machines on real ground (tracking + wheel
-  insert), and they have arrived somewhere specific (the gate, then the site).
-
-  The route runs from +Z toward the base at Z=0; the gate stands at Z=52 and
-  the parking apron just inside it, so "passing the gate" is a real event the
-  camera can cover rather than an arbitrary stop on open snow.
- ]]
+ -- Arrival stays on one camera from the approach through the final park.
+ local function segmentAlpha(time: number,startTime: number,duration: number): number
+  return math.clamp((time-startTime)/duration,0,1)
+ end
+ local LEAD_APPROACH=Z.BaseCenter+V(0,0,150)
+ local LEAD_GATE=Z.BaseCenter+V(0,0,62)
+ local LEAD_PARK=Z.BaseCenter+V(0,0,16)
+ local SECOND_APPROACH=Z.BaseCenter+V(0,0,178)
+ local SECOND_GATE=Z.BaseCenter+V(0,0,96)
+ local SECOND_PARK=Z.BaseCenter+V(0,0,34)
+ local function convoyCenter()
+  local first=env.vehicles[1].model.PrimaryPart
+  local second=env.vehicles[2].model.PrimaryPart
+  if not first or not second then return Z.BaseCenter+V(0,4,60) end
+  return (first.Position+second.Position)*0.5+V(0,4,0)
+ end
  --[[
   The radio over black - but not FIVE SECONDS of a dead frame.
 
@@ -4778,108 +4995,26 @@ function Sequences.build(env,c,ui): {Shot}
   -- exposure rather than a jump from nothing to a lit landscape.
   ui.setBlackout(math.clamp((a-0.35)/0.65,0,1)*0.72)
   Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,166),Z.BaseCenter+V(0,0,150),a,dt)
+  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,194),Z.BaseCenter+V(0,0,178),a,dt)
  end})
- -- High and far, with the near ice ridges crossing the bottom of frame: the
- -- convoy is deliberately small here. One clean location card, lower left.
- --[[
-  Lowered, hard, and brought in.
-
-  At 115 studs and a 24-degree elevation this was a map: the convoy, the
-  route, the base and the ice field were all at the same apparent scale, all
-  below the lens, and nothing crossed the near edge of the frame - which is
-  the exact recipe for a tabletop model. The header's own claim that "the
-  near ice ridges cross the bottom of frame" was not true of the shot it was
-  written above; measured offline, the nearest thing in the picture was 60
-  studs away.
-
-  At 72 studs and 10 degrees the ice field has to be looked THROUGH: near
-  shards cross the bottom and the sides at a completely different scale to
-  the convoy, the route runs away from the lens instead of across it, and the
-  base sits small and high in frame where distance puts it. Same four layers
-  the shot always wanted, in an order the eye can actually read.
- ]]
- add("02_ArcticEstablishing",4,function() return env.vehicles[1].model.PrimaryPart end,V(34,13,62),{light="Exterior",fov=58,to=V(29,11,53),focusOffset=V(0,9,0),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",enter=function()
+ -- A high three-quarter crane follows BOTH vehicles. Its final two seconds
+ -- hold the completed parking composition; the next cut is straight inside.
+ add("02_ArcticArrival",14,convoyCenter,V(38,19,58),{light="Exterior",fov=54,to=V(48,26,70),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",foreground={env.vehicles[1].model,env.vehicles[2].model},enter=function()
   ui.setTitleCard({"THE NORTH POLE","Fifteen years before the invasion"},"Location")
- end,update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,150),Z.BaseCenter+V(0,0,112),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,178),Z.BaseCenter+V(0,0,142),a,dt)
+  ui.playCue("Machinery.VehicleTracks")
+ end,update=function(_,elapsed,dt)
+  if elapsed<7 then
+   Env.moveVehicle(env.vehicles[1],LEAD_APPROACH,LEAD_GATE,segmentAlpha(elapsed,0,7),dt)
+  else
+   Env.moveVehicle(env.vehicles[1],LEAD_GATE,LEAD_PARK,segmentAlpha(elapsed,7,3.5),dt)
+  end
+  if elapsed<8 then
+   Env.moveVehicle(env.vehicles[2],SECOND_APPROACH,SECOND_GATE,segmentAlpha(elapsed,0,8),dt)
+  else
+   Env.moveVehicle(env.vehicles[2],SECOND_GATE,SECOND_PARK,segmentAlpha(elapsed,8,4),dt)
+  end
+  if elapsed>=4 then ui.setTitleCard(nil);ui.setSubtitle(nil,"") end
  end,leave=function() ui.setTitleCard(nil) end})
- --[[
-  Alongside, just above hull height: the shot that has to sell weight.
-
-  The camera sits outside the ploughed berm looking across the route, so the
-  marker poles pass through frame and the movement has something to measure
-  itself against. The poles stand at x=+-9.4 (ROUTE_HALF+2.4 in Env.lua), so
-  the lateral offset has to clear them by enough that they read as passing
-  foreground: at 13 studs out, a pole was 3.3 studs from the lens and its
-  flag alone covered a quarter of the frame - not a wipe, a blindfold. At 19
-  it is 9.6 studs away and reads as what it is.
-
-  The height matters for the same reason in the other axis: the flags sit at
-  3.2-3.9 studs, which was exactly the old lens height, so they crossed dead
-  centre. Above them, the frame looks slightly down across the route and the
-  berm falls below the tyres instead of cutting them off.
- ]]
- --[[
-  `to` is the important part of this shot now. With a fixed offset the lens
-  was welded to the truck: the hull filled the same pixels for three seconds,
-  and the only evidence of movement was the marker poles ticking past. The
-  camera now falls back nine studs over the shot - ahead of the cab to behind
-  the rear axle - so the truck visibly pulls away from the lens, the poles
-  sweep instead of tick, and the flank is read end to end rather than held.
- ]]
- add("03_ConvoyTracking",3.2,function() return env.vehicles[1].model.PrimaryPart end,V(19,1.9,-7.5),{light="Exterior",fov=44,to=V(17.5,1.5,2.5),cue="Machinery.VehicleTracks",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,112),Z.BaseCenter+V(0,0,78),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,142),Z.BaseCenter+V(0,0,110),a,dt)
- end})
- --[[
-  The wheel itself. A rotating cylinder proves nothing at a distance, so one
-  deliberate insert, close enough that the spokes and the contact patch are
-  unambiguous.
-
-  Wheel 5 is the RIGHT-hand middle wheel (wheels are built left side first,
-  front to back, then right), so a camera at +X is on the same side of the
-  truck as its subject rather than looking at it through the hull.
-
-  The lens sits just below the axle, INSIDE the route rather than outside it.
-  Both of those matter:
-
-   * below the axle, because from above it the whole upper frame was the
-     hull, the arch and the skirt - all bodywork, all the same dark value as
-     the tyre, so the insert was a black rectangle. From here the contact
-     patch sits in the lower third where it can be seen meeting the ground.
-   * OUTBOARD but above the berm. The wheel's own face - rim, five spokes,
-     hub - is the part that shows rotation, and it only faces a camera that
-     is out to the side. The ploughed berms stand at x=+-6.6 to 10.0 and are
-     up to 1.7 studs high, though, so a low outboard camera sat INSIDE one
-     and Camera.applyShot's unstick fallback threw the framing away every
-     time this shot played. At 2.55 studs up, the sightline clears the berm
-     with room to spare and still looks down onto the contact patch.
-
-  At 6.4 studs with a 36-degree lens the wheel fills most of the frame, so
-  the spokes sweeping past and the tread meeting the snow are the shot.
- ]]
- -- Two seconds rather than 1.6: at this distance the wheel turns nearly twice
- -- either way, and the extra beat is what lets the eye settle on the contact
- -- patch instead of only registering that something moved.
- add("03b_WheelContact",2,function() return env.vehicles[1].wheels[5].model.PrimaryPart end,V(5.8,1.1,-2.4),{light="Exterior",fov=36,cue="Machinery.VehicleTracks",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,78),Z.BaseCenter+V(0,0,62),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,110),Z.BaseCenter+V(0,0,96),a,dt)
- end})
- -- Arrival: the lead truck passes under the lit gate. Destination, stated.
- -- Closer and tighter than it was: at 42 studs out the gate was a small frame
- -- in the corner of a wide site shot, and the parked apron vehicles read as
- -- the subject. The site gets its own wide next, in 05.
- add("04_GateArrival",2.6,function() return Z.BaseCenter+V(0,4,52) end,V(17,5,25),{light="Exterior",fov=44,to=V(14.5,4.6,21),cue="Machinery.VehicleTracks",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[1],Z.BaseCenter+V(0,0,62),Z.BaseCenter+V(0,0,30),a,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,96),Z.BaseCenter+V(0,0,64),a,dt)
- end})
- -- The site, wide: modules, masts, the drill head and the excavation, all lit
- -- by their own practicals. Held on a slow push so it reads as a place rather
- -- than a fly-past.
- add("05_WorkingBaseReveal",3.4,function() return Z.BaseCenter+V(0,14,-6) end,V(78,26,96),{light="Exterior",fov=60,to=V(70,22,86),pace="Slow",update=function(a,_,dt)
-  Env.moveVehicle(env.vehicles[2],Z.BaseCenter+V(0,0,64),Z.BaseCenter+V(0,0,38),a,dt)
- end})
  -- 06. Inside. A master first - who is in this room and where they stand -
  -- then cut on every speaker.
  master("06_CommandMaster",3,"Command",{light="Command",cue="Radio.SignalPulse",enter=function()
@@ -4887,15 +5022,44 @@ function Sequences.build(env,c,ui): {Shot}
  end,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- -- In FRONT of the display, not behind it. The panel is built facing the room
- -- (+Z) with its bezel at z=-6.55, a fifth of a stud further back, so a lens
- -- authored at -6.5 was looking at the BACK of the screen through its own
- -- bezel. Studio reported it blocked on every run and the unstick pulled the
- -- lens to 1.5 studs, which rendered as a flat grey card with a subtitle on it.
- add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(0.8,0.4,6.5),{stage="Command",light="Command",fov=40,update=function(_,t)
+ --[[
+  In FRONT of the display and off to one side.
+
+  The panel is built facing the room (+Z) with its bezel at z=-6.55, a fifth
+  of a stud further back, so a lens authored at -6.5 was looking at the BACK
+  of the screen through its own bezel: Studio reported it blocked on every
+  run and the unstick pulled in to 1.5 studs, which rendered as a flat grey
+  card with a subtitle on it.
+
+  Straight out in front is not the answer either - that is exactly where Lyra
+  is standing, and castcheck measured the lens at 1.73 studs from her, i.e.
+  inside her.
+
+  So: four and a half studs to Voss's side and seven and a half out. That
+  clears every mark in the room, passes over the island (its top is at y=3,
+  this looks across at y=5), and at eight and a half studs back the panel
+  fills about half the frame rather than all of it - which is what lets the
+  three pulse bars on it actually be the subject of the shot.
+ ]]
+ -- The pulse bars are the SUBJECT of this shot, and they stand a fifth of a
+ -- stud proud of the screen they are drawn on, so the obstruction ray hits
+ -- them on the way to the panel behind. Declared as foreground, or the camera
+ -- spends the shot swinging away from the only thing it is there to show.
+ add("06_ThreePulses",1.8,function() return env.signalDisplay end,V(-4.5,0.8,7.5),{stage="Command",light="Command",fov=40,foreground=env.pulses,update=function(_,t)
   for i,p in env.pulses do p.Size=V(0.25,0.3+math.max(0,math.sin(t*5-i*1.7))*1.5,0.08) end
  end})
- human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport")
+ --[[
+  Over Lyra's shoulder, not a plain medium.
+
+  Hale stands back from the island with Voss between him and his own camera
+  side, so his medium was the one shot in the scene the obstruction logic had
+  to correct on every take - and when a listener's breathing moved the margin,
+  it collapsed to a head filling half the frame. It is also simply the better
+  coverage: his first line is an order addressed at the two of them, and
+  shooting it over one of them says so. The same framing already plays clean
+  on his other two lines.
+ ]]
+ human("06a_HaleReport",1.2,N.Hale,"Report.","Command","Focused","HaleReport",{shot="Over"})
  -- Split in two. As one 128-character card held for six seconds it was the
  -- longest subtitle in the cinematic by a wide margin, and a viewer reading
  -- it is not watching the scene; as two beats it also earns a cut, which is
@@ -4911,7 +5075,16 @@ function Sequences.build(env,c,ui): {Shot}
   for i,h in c.scientists do Cast.react(h,"Concerned",env.signalDisplay.Position,0.25+(i%3)*0.12) end
   for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Concerned",env.signalDisplay.Position,0.75) end
  end})
- human("06i_BeginDrilling",1.5,N.Hale,"Begin drilling.","Command","Determined","HaleDrill")
+ --[[
+  The scene ends on the ROOM, not on a face.
+
+  "Begin drilling" is the decision the whole conversation has been building to,
+  and a master puts the three of them and the display in one frame as it lands
+  - which is both better coverage and a fix: Hale's medium has Voss standing in
+  its sightline, so it played clean on its first frame and was then corrected,
+  and eventually collapsed, part-way through the line.
+ ]]
+ master("06i_BeginDrilling",1.8,"Command",{light="Command",speaker=N.Hale,text="Begin drilling.",expression="Determined",voice="HaleDrill"})
  -- 07. Insert montage; each insert has a specific prop or action.
  add("07a_DrillRotates",2,function() return env.drill:GetChildren()[1] end,V(5,1,7),{light="Exterior",cue="Machinery.DrillLoop",update=function(_,t) env.drill:PivotTo(env.drillBase*A(0,t*6,0));env.drillDust.Rate=35 end,leave=function() env.drillDust.Rate=0 end})
  -- Ahead of the drill head, not behind it: the HeavyDrill rig is parked at
@@ -5160,12 +5333,14 @@ local V=Vector3.new
 -- brief is about: the Arctic arrival's composition and its vehicle, then the
 -- lab's master, coverage and reverse.
 local CAPTURES={
- {"02_ArcticEstablishing",0.15},
- {"02_ArcticEstablishing",0.95},
- {"03_ConvoyTracking",0.5},
- {"03b_WheelContact",0.5},
- {"04_GateArrival",0.35},
- {"05_WorkingBaseReveal",0.6},
+ -- The arrival is now ONE continuous shot, so it is sampled along its length
+ -- rather than once per old cut: the convoy entering far up the route, passing
+ -- the gate, and the held final composition with both trucks parked.
+ {"02_ArcticArrival",0.0},
+ {"02_ArcticArrival",0.25},
+ {"02_ArcticArrival",0.5},
+ {"02_ArcticArrival",0.75},
+ {"02_ArcticArrival",1.0},
  {"06_CommandMaster",0.5},
  {"06b_VossSignal",0.5},
  {"06c_HaleSpacecraft",0.5},
