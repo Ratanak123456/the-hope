@@ -1,0 +1,738 @@
+--!nonstrict
+-- Procedural cast for "The Guardian Beneath the Ice": Lyra/Voss/Hale,
+-- background scientists/soldiers, Aegis Zero (kneeling, sealed) and the
+-- Sovereign Below + Wardens. Same philosophy as NPCService.lua (server) and
+-- AegisRig.lua (shared): no avatar assets, no Toolbox accessories, welded/
+-- articulated primitive parts, variety through colour/scale rather than
+-- unique meshes. Client-local only - see Env.lua's header for why.
+--
+-- Humans use a small custom skeleton (Root -> Waist -> Torso -> Neck -> Head,
+-- Torso -> Shoulders -> Arms, Root -> Hips -> Legs) rather than a real
+-- Humanoid: this is a cinematic-only, camera-driven cast with no NavMesh
+-- walking and no physics, so a full Humanoid would only add async
+-- CreateHumanoidModelFromDescription latency (see MenuScene.lua's mecha
+-- dummy) for no benefit. Aegis Zero is the one exception - it reuses the
+-- real shared AegisRig on a real R15 dummy (MenuScene's exact pattern) so
+-- the mecha the player meets 15 years later is unmistakably the same design.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Palette = require(Shared.Palette)
+local Config = require(Shared.Config)
+local AegisRig = require(Shared.AegisRig)
+
+local Kit = require(script.Parent.Kit)
+
+local Cast = {}
+
+--------------------------------------------------------------------------------
+-- Human rig
+--------------------------------------------------------------------------------
+
+export type Human = {
+	model: Model,
+	root: BasePart,
+	torso: BasePart,
+	head: BasePart,
+	joints: { [string]: Motor6D },
+	scale: number,
+	animState: { seed: number, moving: boolean, phase: string, baseCFrame: CFrame? },
+}
+
+export type HumanSpec = {
+	name: string,
+	cframe: CFrame,
+	scale: number?,
+	skin: Color3,
+	hair: Color3?,
+	coat: Color3,
+	trim: Color3,
+	pants: Color3,
+	headwear: "Hair" | "Hood" | "Helmet",
+	accessory: "Goggles" | "Glasses" | "None"?,
+	scarf: boolean?,
+	backpack: boolean?,
+	sidearm: boolean?,
+	weapon: boolean?,
+}
+
+local function newHumanContainer(name: string, cframe: CFrame, scale: number): (Model, BasePart)
+	local model = Instance.new("Model")
+	model.Name = name
+	local root = Kit.part({ name = "Root", size = Vector3.new(2, 2, 1) * scale, color = Color3.new(0, 0, 0), transparency = 1, cframe = cframe })
+	root.Parent = model
+	model.PrimaryPart = root
+	return model, root
+end
+
+local function addArticulated(model: Model, parent: BasePart, name: string, jointName: string, size: Vector3, localOffset: CFrame, color: Color3, material: Enum.Material?, shadow: boolean?): (BasePart, Motor6D)
+	local worldCFrame = parent.CFrame * localOffset
+	local part = Kit.part({ name = name, size = size, color = color, material = material, cframe = worldCFrame, shadow = shadow })
+	part.Parent = model
+	local motor = Kit.joint(jointName, parent, part, localOffset)
+	return part, motor
+end
+
+local function addRigid(model: Model, host: BasePart, name: string, size: Vector3, localOffset: CFrame, color: Color3, material: Enum.Material?, shape: "Part" | "Wedge"?): BasePart
+	local worldCFrame = host.CFrame * localOffset
+	local part = if shape == "Wedge" then Kit.wedge({ name = name, size = size, color = color, material = material, cframe = worldCFrame }) else Kit.part({ name = name, size = size, color = color, material = material, cframe = worldCFrame })
+	part.Parent = model
+	Kit.weld(host, part)
+	return part
+end
+
+--[[
+	Builds one cinematic human. Joints are always named Waist/Neck/
+	LeftShoulder/RightShoulder/LeftHip/RightHip so every pose helper below
+	works on any Human regardless of who built it.
+]]
+function Cast.buildHuman(parent: Instance, spec: HumanSpec): Human
+	local scale = spec.scale or 1
+	local model, root = newHumanContainer(spec.name, spec.cframe, scale)
+	local joints: { [string]: Motor6D } = {}
+
+	local torso, waist = addArticulated(model, root, "Torso", "Waist", Vector3.new(2, 2.1, 1.1) * scale, CFrame.new(0, 1.2 * scale, 0), spec.coat, Enum.Material.Fabric, true)
+	joints.Waist = waist
+	addRigid(model, torso, "CoatTrim", Vector3.new(2.06, 0.3, 1.16) * scale, CFrame.new(0, -0.9 * scale, 0), spec.trim, Enum.Material.Fabric)
+	addRigid(model, torso, "Collar", Vector3.new(1.5, 0.35, 1.2) * scale, CFrame.new(0, 1.05 * scale, 0.02), spec.trim, Enum.Material.Fabric)
+
+	local head, neck = addArticulated(model, torso, "Head", "Neck", Vector3.new(1.15, 1.15, 1.15) * scale, CFrame.new(0, 1.55 * scale, 0), spec.skin, Enum.Material.SmoothPlastic, true)
+	joints.Neck = neck
+
+	if spec.headwear == "Hair" then
+		addRigid(model, head, "Hair", Vector3.new(1.22, 0.45, 1.22) * scale, CFrame.new(0, 0.42 * scale, 0.02), spec.hair or Color3.fromRGB(40, 32, 28), Enum.Material.Fabric)
+	elseif spec.headwear == "Hood" then
+		addRigid(model, head, "Hood", Vector3.new(1.34, 1.0, 1.34) * scale, CFrame.new(0, 0.15 * scale, 0.06), spec.trim, Enum.Material.Fabric)
+	elseif spec.headwear == "Helmet" then
+		addRigid(model, head, "Helmet", Vector3.new(1.3, 0.95, 1.3) * scale, CFrame.new(0, 0.18 * scale, 0), spec.trim, Enum.Material.Metal)
+		addRigid(model, head, "HelmetVisor", Vector3.new(0.9, 0.24, 0.1) * scale, CFrame.new(0, 0.05 * scale, -0.58 * scale), Palette.Aegis.Visor, Enum.Material.Neon)
+	end
+
+	if spec.accessory == "Goggles" then
+		addRigid(model, head, "Goggles", Vector3.new(0.98, 0.3, 0.22) * scale, CFrame.new(0, 0.58 * scale, -0.5 * scale), Palette.Energy.CyanDim, Enum.Material.Glass)
+	elseif spec.accessory == "Glasses" then
+		addRigid(model, head, "Glasses", Vector3.new(0.86, 0.16, 0.1) * scale, CFrame.new(0, 0.02 * scale, -0.58 * scale), Color3.fromRGB(30, 32, 36), Enum.Material.Glass)
+	end
+
+	if spec.scarf then
+		addRigid(model, torso, "Scarf", Vector3.new(1.5, 0.4, 1.3) * scale, CFrame.new(0, 1.02 * scale, 0.06), Color3.fromRGB(120, 128, 132), Enum.Material.Fabric)
+	end
+	if spec.backpack then
+		addRigid(model, torso, "Backpack", Vector3.new(1.3, 1.4, 0.55) * scale, CFrame.new(0, 0.05 * scale, 0.78 * scale), spec.trim, Enum.Material.Fabric)
+	end
+	if spec.sidearm then
+		addRigid(model, torso, "Holster", Vector3.new(0.35, 0.55, 0.3) * scale, CFrame.new(0.7 * scale, -0.85 * scale, 0.1 * scale), Color3.fromRGB(24, 24, 26), Enum.Material.SmoothPlastic)
+	end
+
+	for _, side in { -1, 1 } do
+		local prefix = if side < 0 then "Left" else "Right"
+		local arm, shoulder = addArticulated(model, torso, prefix .. "Arm", prefix .. "Shoulder", Vector3.new(0.68, 1.9, 0.72) * scale, CFrame.new(side * 1.32 * scale, 0.85 * scale, 0), spec.coat, Enum.Material.Fabric, true)
+		joints[prefix .. "Shoulder"] = shoulder
+		addRigid(model, arm, prefix .. "Cuff", Vector3.new(0.74, 0.3, 0.78) * scale, CFrame.new(0, -0.92 * scale, 0), spec.trim, Enum.Material.Fabric)
+		addRigid(model, arm, prefix .. "Hand", Vector3.new(0.55, 0.42, 0.6) * scale, CFrame.new(0, -1.15 * scale, 0), spec.skin, Enum.Material.SmoothPlastic)
+
+		local leg, hip = addArticulated(model, root, prefix .. "Leg", prefix .. "Hip", Vector3.new(0.82, 1.95, 0.86) * scale, CFrame.new(side * 0.55 * scale, -1.95 * scale, 0), spec.pants, Enum.Material.Fabric, true)
+		joints[prefix .. "Hip"] = hip
+		addRigid(model, leg, prefix .. "Boot", Vector3.new(0.9, 0.5, 1.1) * scale, CFrame.new(0, -1.05 * scale, -0.12 * scale), Color3.fromRGB(28, 28, 30), Enum.Material.SmoothPlastic)
+	end
+
+	if spec.weapon then
+		local rightArm = model:FindFirstChild("RightArm") :: BasePart
+		addRigid(model, rightArm, "Weapon", Vector3.new(0.24, 0.24, 1.7) * scale, CFrame.new(0.4 * scale, -1.3 * scale, -0.4 * scale), Color3.fromRGB(40, 42, 46), Enum.Material.Metal)
+		addRigid(model, rightArm, "WeaponGlow", Vector3.new(0.1, 0.1, 0.16) * scale, CFrame.new(0.4 * scale, -1.3 * scale, -1.2 * scale), Palette.Energy.CyanDim, Enum.Material.Neon)
+	end
+
+	model.Parent = parent
+
+	return {
+		model = model,
+		root = root,
+		torso = torso,
+		head = head,
+		joints = joints,
+		scale = scale,
+		animState = { seed = math.random() * 100, moving = false, phase = "Idle", baseCFrame = nil },
+	}
+end
+
+--------------------------------------------------------------------------------
+-- Named leads + background variety
+--------------------------------------------------------------------------------
+
+local NAMES = Config.Cinematic.Names
+
+function Cast.buildLyra(parent: Instance, cframe: CFrame): Human
+	return Cast.buildHuman(parent, {
+		name = NAMES.Lyra,
+		cframe = cframe,
+		scale = 0.98,
+		skin = Color3.fromRGB(176, 132, 100),
+		hair = Color3.fromRGB(34, 26, 22),
+		coat = Color3.fromRGB(214, 210, 202),
+		trim = Color3.fromRGB(224, 140, 70),
+		pants = Color3.fromRGB(58, 60, 66),
+		headwear = "Hair",
+		accessory = "Goggles",
+	})
+end
+
+function Cast.buildVoss(parent: Instance, cframe: CFrame): Human
+	return Cast.buildHuman(parent, {
+		name = NAMES.Voss,
+		cframe = cframe,
+		scale = 1.05,
+		skin = Color3.fromRGB(214, 186, 160),
+		hair = Color3.fromRGB(70, 70, 74),
+		coat = Color3.fromRGB(36, 46, 64),
+		trim = Color3.fromRGB(150, 156, 162),
+		pants = Color3.fromRGB(40, 42, 48),
+		headwear = "Hair",
+		accessory = "Glasses",
+		scarf = true,
+		backpack = true,
+	})
+end
+
+function Cast.buildHale(parent: Instance, cframe: CFrame): Human
+	return Cast.buildHuman(parent, {
+		name = NAMES.Hale,
+		cframe = cframe,
+		scale = 1.12,
+		skin = Color3.fromRGB(196, 158, 132),
+		hair = Color3.fromRGB(150, 150, 154),
+		coat = Color3.fromRGB(30, 32, 36),
+		trim = Color3.fromRGB(150, 40, 44),
+		pants = Color3.fromRGB(24, 25, 28),
+		headwear = "Hair",
+		accessory = "None",
+		sidearm = true,
+	})
+end
+
+local SCIENTIST_COATS = { Color3.fromRGB(214, 210, 202), Color3.fromRGB(196, 188, 168), Color3.fromRGB(160, 172, 180), Color3.fromRGB(180, 176, 190) }
+local SOLDIER_COATS = { Color3.fromRGB(58, 62, 58), Color3.fromRGB(64, 66, 70), Color3.fromRGB(50, 54, 58) }
+local SKIN_TONES = { Color3.fromRGB(232, 191, 160), Color3.fromRGB(198, 150, 115), Color3.fromRGB(151, 105, 79), Color3.fromRGB(100, 70, 52), Color3.fromRGB(240, 205, 180), Color3.fromRGB(178, 140, 118) }
+local HAIR_TONES = { Color3.fromRGB(36, 30, 26), Color3.fromRGB(70, 52, 36), Color3.fromRGB(20, 20, 22), Color3.fromRGB(120, 96, 70), Color3.fromRGB(150, 150, 156), Color3.fromRGB(90, 60, 40) }
+local HEADWEAR: { "Hair" | "Hood" } = { "Hair", "Hood" }
+
+function Cast.buildScientist(parent: Instance, cframe: CFrame, rng: Random, index: number): Human
+	return Cast.buildHuman(parent, {
+		name = `Scientist{index}`,
+		cframe = cframe,
+		scale = 0.92 + rng:NextNumber() * 0.16,
+		skin = Kit.pick(rng, SKIN_TONES),
+		hair = Kit.pick(rng, HAIR_TONES),
+		coat = Kit.pick(rng, SCIENTIST_COATS),
+		trim = Color3.fromRGB(214, 140, 70),
+		pants = Color3.fromRGB(50, 52, 58),
+		headwear = Kit.pick(rng, HEADWEAR),
+		accessory = if rng:NextNumber() < 0.4 then "Glasses" else "None",
+		backpack = rng:NextNumber() < 0.5,
+	})
+end
+
+function Cast.buildSoldier(parent: Instance, cframe: CFrame, rng: Random, index: number): Human
+	return Cast.buildHuman(parent, {
+		name = `Soldier{index}`,
+		cframe = cframe,
+		scale = 1.0 + rng:NextNumber() * 0.14,
+		skin = Kit.pick(rng, SKIN_TONES),
+		coat = Kit.pick(rng, SOLDIER_COATS),
+		trim = Color3.fromRGB(60, 62, 66),
+		pants = Color3.fromRGB(38, 40, 44),
+		headwear = "Helmet",
+		accessory = "None",
+		backpack = rng:NextNumber() < 0.6,
+		weapon = true,
+	})
+end
+
+--------------------------------------------------------------------------------
+-- Human pose helpers - the "personality through movement" toolkit. All take
+-- a Human and set Motor6D.Transform directly (no tweening here: sequences
+-- decide whether a change is instant or interpolated over a shot's alpha).
+--------------------------------------------------------------------------------
+
+function Cast.lookAt(human: Human, worldPoint: Vector3, weight: number?)
+	local w = weight or 1
+	local neck = human.joints.Neck
+	if not neck then
+		return
+	end
+	local headPos = human.head.Position
+	local flat = Vector3.new(worldPoint.X - headPos.X, 0, worldPoint.Z - headPos.Z)
+	local forward = (human.torso.CFrame.LookVector)
+	local yaw = 0
+	if flat.Magnitude > 0.05 then
+		local angleToTarget = math.atan2(flat.X, flat.Z) - math.atan2(forward.X, forward.Z)
+		yaw = math.clamp(-angleToTarget, math.rad(-70), math.rad(70))
+	end
+	local dy = worldPoint.Y - headPos.Y
+	local pitch = math.clamp(math.atan2(dy, flat.Magnitude + 0.01), math.rad(-45), math.rad(45))
+	neck.Transform = CFrame.Angles(pitch * 0.6 * w, yaw * w, 0)
+end
+
+function Cast.setLean(human: Human, forward: number, side: number?)
+	local waist = human.joints.Waist
+	if waist then
+		waist.Transform = CFrame.Angles(forward, side or 0, 0)
+	end
+end
+
+-- amount 0..1: 0 standing, 1 fully kneeling (one knee down, torso forward).
+-- Caches the standing CFrame the first time it's called and reuses it for
+-- amount=0 (un-kneel) within that same use - if a caller ever wants to kneel
+-- the same rig again after moving it elsewhere in between, clear
+-- human.animState.baseCFrame first so this recaptures the new standing pose.
+function Cast.setKneel(human: Human, amount: number)
+	local scale = human.scale
+	local root = human.root
+	local base = human.animState.baseCFrame or root.CFrame
+	human.animState.baseCFrame = base
+	root.CFrame = base * CFrame.new(0, -0.75 * scale * amount, 0.15 * scale * amount)
+	local leftHip, rightHip = human.joints.LeftHip, human.joints.RightHip
+	if leftHip then
+		leftHip.Transform = CFrame.new(0, -0.2 * scale * amount, 0.25 * scale * amount) * CFrame.Angles(math.rad(96) * amount, 0, 0)
+	end
+	if rightHip then
+		rightHip.Transform = CFrame.Angles(math.rad(58) * amount, 0, 0)
+	end
+	Cast.setLean(human, math.rad(14) * amount)
+end
+
+function Cast.pointAt(human: Human, side: "Left" | "Right", worldPoint: Vector3, weight: number?)
+	local shoulder = human.joints[side .. "Shoulder"]
+	if not shoulder then
+		return
+	end
+	local w = weight or 1
+	local shoulderPos = (human.torso.CFrame * CFrame.new((if side == "Left" then -1 else 1) * 0.66 * human.scale, 0.85 * human.scale, 0)).Position
+	local toTarget = worldPoint - shoulderPos
+	if toTarget.Magnitude < 0.1 then
+		return
+	end
+	local localDir = human.torso.CFrame:VectorToObjectSpace(toTarget.Unit)
+	local pitch = math.asin(math.clamp(-localDir.Y, -1, 1))
+	local yaw = math.atan2(localDir.X * (if side == "Left" then -1 else 1), -localDir.Z)
+	shoulder.Transform = CFrame.Angles(math.rad(-70) * w + pitch * w, 0, yaw * 0.6 * w * (if side == "Left" then -1 else 1))
+end
+
+-- A restrained, readable hand gesture during dialogue - not a full point,
+-- just a small emphasis lift. `phase` 0..1 (usually sin-eased by the caller).
+function Cast.gesture(human: Human, side: "Left" | "Right", phase: number)
+	local shoulder = human.joints[side .. "Shoulder"]
+	if shoulder then
+		local sign = if side == "Left" then -1 else 1
+		shoulder.Transform = CFrame.Angles(math.rad(-24) * phase, 0, math.rad(10) * phase * sign)
+	end
+end
+
+function Cast.setWalking(human: Human, moving: boolean)
+	human.animState.moving = moving
+end
+
+-- Subtle idle breathing + (while `moving`) a walk-cycle limb swing. Call once
+-- per frame from the cinematic's single shared heartbeat, same idea as
+-- NPCService's Heartbeat loop and MenuScene's heartbeat().
+function Cast.stepAnimate(human: Human, now: number)
+	local seed = human.animState.seed
+	local moving = human.animState.moving
+	local swing = if moving then math.sin((now + seed) * 6.2) else math.sin((now + seed) * 1.4) * 0.05
+	local leftHip, rightHip = human.joints.LeftHip, human.joints.RightHip
+	local leftShoulder, rightShoulder = human.joints.LeftShoulder, human.joints.RightShoulder
+	if moving then
+		if leftHip then leftHip.Transform = CFrame.Angles(swing * 0.5, 0, 0) end
+		if rightHip then rightHip.Transform = CFrame.Angles(-swing * 0.5, 0, 0) end
+		if leftShoulder then leftShoulder.Transform = CFrame.Angles(-swing * 0.4, 0, 0) end
+		if rightShoulder then rightShoulder.Transform = CFrame.Angles(swing * 0.4, 0, 0) end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Aegis Zero: the real shared AegisRig, kneeling, sealed with chains.
+--------------------------------------------------------------------------------
+
+export type AegisHandle = {
+	dummy: Model,
+	root: BasePart,
+	joints: { [string]: Motor6D },
+	core: BasePart?,
+	coreLight: PointLight?,
+	visor: BasePart?,
+	chains: { Model },
+	scale: number,
+}
+
+local function findMotors(dummy: Model): { [string]: Motor6D }
+	local joints = {}
+	for _, item in dummy:GetDescendants() do
+		if item:IsA("Motor6D") then
+			joints[item.Name] = item
+		end
+	end
+	return joints
+end
+
+-- One sagging chain: a handful of jointed cylinder links running from the
+-- Mecha's fist down to a point on the seal ring, so it can be re-angled by
+-- lightly nudging each link's own CFrame (used for the "chains shaking"
+-- beat) and later blown apart link-by-link (the "chain breaks" beat) without
+-- needing real chain physics.
+local function buildChain(parent: Instance, from: Vector3, to: Vector3, thickness: number): Model
+	local chain = Instance.new("Model")
+	chain.Name = "Chain"
+	local segments = 7
+	local delta = (to - from) / segments
+	local length = delta.Magnitude
+	for i = 0, segments - 1 do
+		local segFrom = from + delta * i
+		local segTo = segFrom + delta
+		local mid = segFrom:Lerp(segTo, 0.5)
+		local link = Kit.cylinder({
+			name = `Link{i}`,
+			size = Vector3.new(length * 0.92, thickness, thickness),
+			color = Palette.Ancient.StoneDark,
+			material = Enum.Material.Metal,
+			cframe = CFrame.lookAt(mid, segTo),
+			shadow = true,
+		}, "x")
+		link.Parent = chain
+	end
+	chain.Parent = parent
+	return chain
+end
+
+--[[
+	Builds the Aegis Zero cinematic dummy: a real R15 humanoid model wearing
+	the shared AegisRig plating (exactly MenuScene.upgradeMecha's technique),
+	posed kneeling from the start, plus embedded ancient weapons, frost
+	patches, a damaged faceplate/shoulder, and four sagging chains from its
+	fists down to the seal ring beneath it. Wrapped in pcall exactly like
+	MenuScene's version: if avatar creation ever fails, the caller gets a
+	handle with `dummy` left nil-safe rather than the whole cinematic erroring.
+]]
+function Cast.buildAegisZero(parent: Instance, cframe: CFrame, scale: number): AegisHandle
+	local handle: AegisHandle = { dummy = nil :: any, root = nil :: any, joints = {}, chains = {}, scale = scale }
+
+	local ok, err = pcall(function()
+		local blankDescription = Instance.new("HumanoidDescription")
+		local dummy = Players:CreateHumanoidModelFromDescription(blankDescription, Enum.HumanoidRigType.R15)
+		local humanoid = dummy:FindFirstChildOfClass("Humanoid") :: Humanoid
+		local root = dummy:FindFirstChild("HumanoidRootPart") :: BasePart
+
+		dummy.Name = "AegisZeroSealed"
+		dummy:PivotTo(cframe)
+		root.Anchored = true
+		humanoid.PlatformStand = true
+		humanoid.WalkSpeed = 0
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+
+		for _, name in { "BodyDepthScale", "BodyHeightScale", "BodyWidthScale", "HeadScale" } do
+			local value = humanoid:FindFirstChild(name)
+			if value and value:IsA("NumberValue") then
+				value.Value = scale
+			end
+		end
+		AegisRig.applyUnderlayer(dummy)
+		for _, group in AegisRig.Groups do
+			AegisRig.buildGroup(dummy, humanoid, group)
+		end
+		AegisRig.ignite(dummy)
+
+		-- Frost patches: pale translucent slabs over one shin, one pauldron and
+		-- the torso, per "ice covers large sections of its body."
+		for _, frost in {
+			{ limb = "RightLowerLeg", size = Vector3.new(1.7, 1.0, 1.85), offset = CFrame.new(0, -0.1, 0.05) },
+			{ limb = "LeftUpperArm", size = Vector3.new(2.05, 0.7, 2.1), offset = CFrame.new(0, 0.35, 0) },
+			{ limb = "UpperTorso", size = Vector3.new(1.4, 0.6, 1.6), offset = CFrame.new(0, -0.3, 0.05) },
+		} do
+			local limb = dummy:FindFirstChild(frost.limb)
+			if limb and limb:IsA("BasePart") then
+				local ice = Kit.part({ name = "FrostPatch", size = limb.Size * frost.size, color = Color3.fromRGB(206, 224, 230), material = Enum.Material.Ice, transparency = 0.35, cframe = limb.CFrame * CFrame.new(limb.Size * Vector3.new(frost.offset.X, frost.offset.Y, frost.offset.Z)) })
+				ice.Parent = dummy
+				Kit.weld(limb, ice)
+			end
+		end
+
+		-- Damaged faceplate (a dark scorch patch over one cheek) and a torn
+		-- shoulder (a jagged dark gap plate), per the spec's damage list.
+		local head = dummy:FindFirstChild("Head")
+		if head and head:IsA("BasePart") then
+			local scorch = Kit.part({ name = "FaceplateDamage", size = head.Size * Vector3.new(0.5, 0.4, 0.3), color = Palette.Aegis.Joint, material = Enum.Material.DiamondPlate, cframe = head.CFrame * CFrame.new(head.Size.X * 0.32, head.Size.Y * -0.05, -head.Size.Z * 0.4) })
+			scorch.Parent = dummy
+			Kit.weld(head, scorch)
+		end
+		local shoulder = dummy:FindFirstChild("LeftUpperArm")
+		if shoulder and shoulder:IsA("BasePart") then
+			local tear = Kit.part({ name = "TornShoulder", size = shoulder.Size * Vector3.new(0.5, 0.3, 0.9), color = Palette.Aegis.Joint, material = Enum.Material.CorrodedMetal, cframe = shoulder.CFrame * CFrame.new(shoulder.Size.X * 0.3, shoulder.Size.Y * 0.5, 0) })
+			tear.Parent = dummy
+			Kit.weld(shoulder, tear)
+		end
+
+		-- Embedded ancient weapons: three thin wedge "blades" driven into the
+		-- back and shoulders, per "ancient weapons remain embedded."
+		local back = dummy:FindFirstChild("UpperTorso")
+		if back and back:IsA("BasePart") then
+			for i, x in { -0.5, 0, 0.55 } do
+				local blade = Kit.wedge({ name = `EmbeddedBlade{i}`, size = Vector3.new(0.16, 1.6, 0.34) * scale, color = Palette.Ancient.BronzeDark, material = Enum.Material.Metal, cframe = back.CFrame * CFrame.new(back.Size.X * x, back.Size.Y * 0.3, back.Size.Z * 0.55) * CFrame.Angles(math.rad(30), 0, 0) })
+				blade.Parent = dummy
+				Kit.weld(back, blade)
+			end
+		end
+
+		local core = AegisRig.findPiece(dummy, "Core")
+		local coreLight = core and core:FindFirstChildOfClass("PointLight")
+		if coreLight then
+			coreLight.Brightness = 0 -- dark before activation, per spec
+		end
+		if core then
+			core.Transparency = 0.85 -- dark core, faint outline only until it pulses
+		end
+
+		local joints = findMotors(dummy)
+
+		-- The kneeling seal pose: both knees on the floor, torso leaning
+		-- forward, arms reaching down, head hanging.
+		local function j(name: string): Motor6D?
+			return joints[name]
+		end
+		if j("Waist") then (j("Waist") :: Motor6D).Transform = CFrame.Angles(math.rad(34), 0, 0) end
+		if j("Neck") then (j("Neck") :: Motor6D).Transform = CFrame.Angles(math.rad(26), 0, 0) end
+		if j("LeftHip") then (j("LeftHip") :: Motor6D).Transform = CFrame.Angles(math.rad(100), 0, math.rad(-4)) end
+		if j("RightHip") then (j("RightHip") :: Motor6D).Transform = CFrame.Angles(math.rad(100), 0, math.rad(4)) end
+		if j("LeftKnee") then (j("LeftKnee") :: Motor6D).Transform = CFrame.Angles(math.rad(-128), 0, 0) end
+		if j("RightKnee") then (j("RightKnee") :: Motor6D).Transform = CFrame.Angles(math.rad(-128), 0, 0) end
+		if j("LeftAnkle") then (j("LeftAnkle") :: Motor6D).Transform = CFrame.Angles(math.rad(46), 0, 0) end
+		if j("RightAnkle") then (j("RightAnkle") :: Motor6D).Transform = CFrame.Angles(math.rad(46), 0, 0) end
+		if j("LeftShoulder") then (j("LeftShoulder") :: Motor6D).Transform = CFrame.Angles(math.rad(-58), 0, math.rad(-8)) end
+		if j("RightShoulder") then (j("RightShoulder") :: Motor6D).Transform = CFrame.Angles(math.rad(-58), 0, math.rad(8)) end
+		if j("LeftElbow") then (j("LeftElbow") :: Motor6D).Transform = CFrame.Angles(math.rad(-38), 0, 0) end
+		if j("RightElbow") then (j("RightElbow") :: Motor6D).Transform = CFrame.Angles(math.rad(-38), 0, 0) end
+
+		dummy.Parent = parent
+
+		-- Chains from each fist down to a seal-ring point directly beneath.
+		local chainsFolder = Instance.new("Folder")
+		chainsFolder.Name = "Chains"
+		chainsFolder.Parent = dummy
+		for _, side in { "Left", "Right" } do
+			local fist = AegisRig.findPiece(dummy, side .. "Fist")
+			if fist then
+				local from = fist.Position
+				local to = from + Vector3.new((if side == "Left" then -1 else 1) * 1.4 * scale, -5.2 * scale, 1.2 * scale)
+				table.insert(handle.chains, buildChain(chainsFolder, from, to, 0.4 * scale))
+			end
+		end
+
+		handle.dummy = dummy
+		handle.root = root
+		handle.joints = joints
+		handle.core = core
+		handle.coreLight = coreLight
+		handle.visor = AegisRig.findPiece(dummy, "Visor")
+	end)
+
+	if not ok then
+		warn(`[SKY BROKE] North Pole Cast: Aegis Zero dummy build failed: {err}`)
+	end
+
+	return handle
+end
+
+-- 0 = fully sealed/dark, 1 = fully awakened (core blazing, head lifted,
+-- visor lit). Called across several shots as activation progresses.
+function Cast.setAegisAwaken(handle: AegisHandle, amount: number)
+	if not handle.dummy then
+		return
+	end
+	if handle.coreLight then
+		handle.coreLight.Brightness = 2.6 * amount
+	end
+	if handle.core then
+		handle.core.Transparency = 0.85 - 0.8 * amount
+	end
+	if handle.visor then
+		handle.visor.Transparency = 1 - 0.9 * amount
+	end
+	local function j(name: string): Motor6D?
+		return handle.joints[name]
+	end
+	-- Head lifts first (reads as "resisting/waking"), well before the body
+	-- actually tries to rise.
+	if j("Neck") then (j("Neck") :: Motor6D).Transform = CFrame.Angles(math.rad(26) - math.rad(30) * amount, 0, 0) end
+end
+
+-- 0 = still fully kneeling, 1 = torso forced upright against the chains
+-- (the "power system forces Aegis upward" beat).
+function Cast.setAegisRise(handle: AegisHandle, amount: number)
+	if not handle.dummy then
+		return
+	end
+	local function j(name: string): Motor6D?
+		return handle.joints[name]
+	end
+	if j("Waist") then (j("Waist") :: Motor6D).Transform = CFrame.Angles(math.rad(34) - math.rad(30) * amount, 0, 0) end
+	if j("LeftShoulder") then (j("LeftShoulder") :: Motor6D).Transform = CFrame.Angles(math.rad(-58) + math.rad(20) * amount, 0, math.rad(-8)) end
+	if j("RightShoulder") then (j("RightShoulder") :: Motor6D).Transform = CFrame.Angles(math.rad(-58) + math.rad(20) * amount, 0, math.rad(8)) end
+end
+
+-- Hides one chain instantly (used when a chain "breaks" - a quick scatter
+-- tween is applied by the caller before this, this just removes it from the
+-- model so it stops being posed).
+function Cast.breakChain(handle: AegisHandle, index: number)
+	local chain = handle.chains[index]
+	if chain then
+		chain.Parent = nil
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Aliens: the Sovereign Below + Wardens. Deliberately built from broad,
+-- simple biomechanical primitives with silhouette/partial visibility in
+-- mind - the spec explicitly wants shapes and shadow before a clean reveal.
+--------------------------------------------------------------------------------
+
+export type Creature = {
+	model: Model,
+	root: BasePart,
+	eyes: { BasePart },
+	limbs: { [string]: Motor6D },
+	scale: number,
+}
+
+--[[
+	One long, layered biomechanical trunk (a handful of tapered cylinder
+	segments), a narrow head with several eye sockets, folded claw limbs, and
+	two broken wing slabs on the back. `frozen`: when true, the whole model is
+	wrapped in a translucent ice shell and eyes start fully dark - used for
+	the Sovereign's first reveal and for background Warden silhouettes.
+]]
+local function buildBiomech(parent: Instance, cframe: CFrame, scale: number, eyeCount: number, limbCount: number, frozen: boolean): Creature
+	local model = Instance.new("Model")
+	model.Name = "Biomech"
+	local root = Kit.part({ name = "Root", size = Vector3.new(1, 1, 1) * scale, color = Color3.new(0, 0, 0), transparency = 1, cframe = cframe })
+	root.Parent = model
+	model.PrimaryPart = root
+
+	-- Trunk: 4 tapered segments running back from the root.
+	local segmentSizes = { Vector3.new(3.2, 3.0, 3.6), Vector3.new(2.7, 2.5, 3.2), Vector3.new(2.1, 2.0, 2.8), Vector3.new(1.4, 1.3, 2.2) }
+	local z = 0
+	for i, size in segmentSizes do
+		local segSize = size * scale
+		z += segSize.Z * 0.5
+		local seg = Kit.part({ name = `Segment{i}`, size = segSize, color = Palette.Alien.Shell, material = Enum.Material.Slate, cframe = root.CFrame * CFrame.new(0, 0, z), shadow = true })
+		seg.Parent = model
+		Kit.weld(root, seg)
+		-- Plate ridges: thin lighter strips along the top of each segment.
+		local ridge = Kit.part({ name = `Ridge{i}`, size = Vector3.new(segSize.X * 0.3, segSize.Y * 0.16, segSize.Z * 0.9), color = Palette.Alien.ShellLight, material = Enum.Material.Slate, cframe = seg.CFrame * CFrame.new(0, segSize.Y * 0.5, 0) })
+		ridge.Parent = model
+		Kit.weld(seg, ridge)
+		z += segSize.Z * 0.5
+	end
+
+	-- Head: narrow, forward of the first segment, with `eyeCount` small
+	-- violet sockets - dark spheres that light up on command.
+	local head = Kit.part({ name = "Head", size = Vector3.new(1.6, 1.5, 2.4) * scale, color = Palette.Alien.Plate, material = Enum.Material.Slate, cframe = root.CFrame * CFrame.new(0, 0.3 * scale, -1.6 * scale), shadow = true })
+	head.Parent = model
+	Kit.weld(root, head)
+	local eyes: { BasePart } = {}
+	for i = 1, eyeCount do
+		local t = (i - 1) / math.max(1, eyeCount - 1) - 0.5
+		local eye = Kit.ball({ name = `Eye{i}`, size = Vector3.new(0.22, 0.22, 0.22) * scale, color = Palette.Alien.Energy, material = Enum.Material.Neon, transparency = 1, cframe = head.CFrame * CFrame.new(t * 1.1 * scale, 0.2 * scale, -1.15 * scale) })
+		eye.Parent = model
+		Kit.weld(head, eye)
+		table.insert(eyes, eye)
+	end
+
+	-- Folded limbs: thin tapered wedges tucked along the trunk, a couple
+	-- articulated (for the "unfolds one limb" beat), the rest rigid.
+	local limbs: { [string]: Motor6D } = {}
+	for i = 1, limbCount do
+		local side = if i % 2 == 0 then 1 else -1
+		local articulated = i <= 2
+		local size = Vector3.new(0.5, 0.5, 3.4 - (i * 0.15)) * scale
+		local offset = CFrame.new(side * 1.6 * scale, -0.3 * scale, -0.6 * scale * i) * CFrame.Angles(0, math.rad(side * 40), math.rad(70))
+		if articulated then
+			local worldCFrame = root.CFrame * offset
+			local limb = Kit.part({ name = `Limb{i}`, size = size, color = Palette.Alien.Sinew, material = Enum.Material.Slate, cframe = worldCFrame, shadow = true })
+			limb.Parent = model
+			local motor = Kit.joint(`Limb{i}Joint`, root, limb, offset)
+			limbs[`Limb{i}`] = motor
+		else
+			local limb = Kit.part({ name = `Limb{i}`, size = size, color = Palette.Alien.Sinew, material = Enum.Material.Slate, cframe = root.CFrame * offset })
+			limb.Parent = model
+			Kit.weld(root, limb)
+		end
+	end
+
+	-- Broken wings: two flat, jagged slabs on the back.
+	for _, side in { -1, 1 } do
+		local wing = Kit.wedge({ name = (if side < 0 then "LeftWing" else "RightWing"), size = Vector3.new(0.3, 2.2, 3.4) * scale, color = Palette.Alien.Plate, material = Enum.Material.Slate, cframe = root.CFrame * CFrame.new(side * 1.4 * scale, 1.2 * scale, 1.6 * scale) * CFrame.Angles(0, math.rad(side * -20), math.rad(side * 30)) })
+		wing.Parent = model
+		Kit.weld(root, wing)
+	end
+
+	if frozen then
+		local shell = Kit.part({ name = "IceShell", size = Vector3.new(1, 1, 1), color = Color3.fromRGB(198, 220, 228), material = Enum.Material.Ice, transparency = 0.45 })
+		-- Size the shell to loosely wrap the whole model's bounding box.
+		local _, size = model:GetBoundingBox()
+		shell.Size = size * 1.06
+		shell.CFrame = model:GetPivot()
+		shell.Parent = model
+		Kit.weld(root, shell)
+	end
+
+	model.Parent = parent
+
+	return { model = model, root = root, eyes = eyes, limbs = limbs, scale = scale }
+end
+
+function Cast.buildSovereign(parent: Instance, cframe: CFrame, scale: number): Creature
+	return buildBiomech(parent, cframe, scale, 5, 6, true)
+end
+
+function Cast.buildWarden(parent: Instance, cframe: CFrame, scale: number, frozen: boolean): Creature
+	return buildBiomech(parent, cframe, scale, 2, 3, frozen)
+end
+
+-- Opens eyes progressively: `amount` 0..1, eyes light up left-to-right so
+-- they don't all snap on at once (per "open the remaining eyes at slightly
+-- different times").
+function Cast.setCreatureEyes(creature: Creature, amount: number, color: Color3?)
+	local n = #creature.eyes
+	for i, eye in creature.eyes do
+		local threshold = (i - 1) / math.max(1, n)
+		local local_ = math.clamp((amount - threshold) * n, 0, 1)
+		eye.Transparency = 1 - local_
+		if color then
+			eye.Color = color
+		end
+		local light = eye:FindFirstChildOfClass("PointLight")
+		if local_ > 0.05 and not light then
+			light = Kit.light(eye, color or Palette.Alien.Energy, 10 * creature.scale, 1.4)
+		end
+		if light then
+			light.Brightness = 1.4 * local_
+		end
+	end
+end
+
+-- Slowly unfolds the first two articulated limbs, `amount` 0..1.
+function Cast.setCreatureLimbUnfold(creature: Creature, amount: number)
+	for _, name in { "Limb1", "Limb2" } do
+		local motor = creature.limbs[name]
+		if motor then
+			motor.Transform = CFrame.Angles(0, math.rad(50) * amount, math.rad(-40) * amount)
+		end
+	end
+end
+
+function Cast.removeIceShell(creature: Creature)
+	local shell = creature.model:FindFirstChild("IceShell")
+	if shell then
+		shell:Destroy()
+	end
+end
+
+return Cast

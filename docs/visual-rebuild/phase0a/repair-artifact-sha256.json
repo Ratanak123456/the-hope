@@ -1,0 +1,12 @@
+{
+  "phase0a.project.json": "bb47910dc309091613253aac55aa212597c0c948ce50e4c1f3eb0d70c0b67479",
+  "phase0a.rbxlx": "b73144659fafa1a9579b9359589193bbd6203c87e2f01a2428aab27b018f74ba",
+  "src/shared/Human/Actor.lua": "b9417e017dbd1fb07ae637d7201580b2b766e1524fff20748bb17c43f8853bbb",
+  "src/shared/Human/Build.lua": "cf7df5e045a57a10aefdc693b404c5d428a957c62b972a3f5df99231c70dbd33",
+  "src/shared/Human/Locomotion.lua": "c1a490eaba5f7fc2961b2d74481621f679744ee6608d9199984db3cb5c660223",
+  "src/shared/Human/Pose.lua": "b390fae47fd3b87b2172a22fca59422bfbe3eac9625d1772012b571fbcba8df1",
+  "src/shared/Human/Skeleton.lua": "bf6bad5e4c8e6d6130600a073d8870c163ec4ed027d2364ec61bb536619b2e9e",
+  "src/shared/Human/Validate.lua": "41c46961e1a97f61609adb5455aa08bf17704b4992b8644e6495a802ad6b210d",
+  "tools/phase0a/Phase0A.client.lua": "4c257bd49870f29cdf7dd4b900ba5351f045c61988afb89c66e52ba28720840a",
+  "tools/phase0a/Timeline.lua": "868639f9220a35b880c277b06ccf1c2b4b0a7c389d74ac0e63a0c6bc42c10758"
+}

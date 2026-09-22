@@ -1,0 +1,94 @@
+
+1. GEOMETRY, derived from the joint table (not restated)
+--------------------------------------------------------
+  thigh length          1.350000
+  shin length           1.150000
+  leg reach             2.500000
+  ankle pivot height    0.300000
+  root -> sole (straight) 2.700000
+  standing leg span     2.497636   (knee bend 5.0 deg)
+  standing height       5.700000
+  head / height         0.192982   (target ~0.19, R15-like)
+  hip pivot -> sole / h 0.491228   (target ~0.49)
+  head / torso width    0.628571   (target ~0.6 for R15)
+
+2. IK ACCURACY (does the solved chain actually reach the target?)
+-----------------------------------------------------------------
+  worst ankle placement error   0.000000 studs   Left target (-0.40,0.32,0.00)
+
+3. KNEE AND ELBOW BEND DIRECTION (geometric, not by convention)
+---------------------------------------------------------------
+  knee pivot behind the hip-ankle chord (0 = always forward, correct)   0.000000
+  elbow pivot ahead of the shoulder-wrist chord (0 = always behind)     0.000000
+
+4. FULL DEMO TIMELINE (the same sequence the Studio test plays)
+---------------------------------------------------------------
+  simulated 3891 frames (64.8 s)
+
+  check              worst value    failures   verdict
+  rootUpright        0.000000       0          pass
+  torsoUpright       0.000000       0          pass
+  feetGrounded       0.000000       0          pass
+  noFootSlide        0.000000       0          pass
+  kneeDirection      0.000000       0          pass
+  elbowDirection     0.000000       0          pass
+  armClearsTorso     0.000000       0          pass
+  headOnNeck         0.000000       0          pass
+  legReach           0.000000       0          pass
+  noResidualPose     0.000000       0          pass
+  noAccumulation     0.000000       0          pass
+  pelvisSupported    0.108358       0          pass
+  pelvisRate         0.600000       0          pass
+  overSupport        0.318198       0          pass
+  bodyDrop           0.138070       0          pass
+  bodyVerticalRate   0.732068       0          pass
+  targetReach        0.000000       0          pass
+
+5. REPEATED ACTION - does the rig distort as an action repeats?
+---------------------------------------------------------------
+  pose difference between gesture 1 and gesture 40   0.000000  (none)
+
+6. EXACT NEUTRAL RETURN (pose-owned joints, after the whole timeline)
+---------------------------------------------------------------------
+  worst deviation from rest pose   0.000000  (none)
+  pelvis drop held by the IK       0.019951 studs
+  action layers still active       none
+
+7. SPEED RESPONSE (is the step cycle driven by distance, not time?)
+-------------------------------------------------------------------
+  steps per stud at speed 1.3   0.984444
+  steps per stud at speed 2.6   0.962852
+
+8. ISOLATED LOCOMOTION CASES (decelerate, turn, then both together)
+-------------------------------------------------------------------
+  budget: drop <= 0.220000   rate <= 0.600000   base <= 0.705158
+
+  decelerate to a stop from 1.0      drop 0.103983  rate 0.600000  base 0.140534  pass
+  decelerate to a stop from 1.6      drop 0.104505  rate 0.600000  base 0.128851  pass
+  decelerate to a stop from 2.2      drop 0.104648  rate 0.600000  base 0.141321  pass
+  decelerate to a stop from 2.8      drop 0.104146  rate 0.600000  base 0.115264  pass
+  decelerate to a stop from 3.4      drop 0.111449  rate 0.600000  base 0.139283  pass
+
+  turn 30 deg at constant speed      drop 0.104866  rate 0.600000  base 0.221827  pass
+  turn 60 deg at constant speed      drop 0.103517  rate 0.600000  base 0.202009  pass
+  turn 90 deg at constant speed      drop 0.103817  rate 0.600000  base 0.190965  pass
+  turn 120 deg at constant speed     drop 0.103944  rate 0.600000  base 0.213959  pass
+
+  turn 60 deg then decelerate        drop 0.102804  rate 0.600000  base 0.240907  pass
+  turn 90 deg then decelerate        drop 0.139637  rate 0.600000  base 0.275146  pass
+
+9. SHARED STUDIO TAKE AT MULTIPLE FRAME RATES
+---------------------------------------------
+   30 fps: body drop 0.138077, vertical rate 0.731840, pass
+   60 fps: body drop 0.138070, vertical rate 0.732068, pass
+  120 fps: body drop 0.154712, vertical rate 0.732170, pass
+
+10. TURN PREDICTION DIRECTION
+-----------------------------
+
+11. BODY VALIDATOR REGRESSIONS
+------------------------------
+  exercised collapse, shallow jerk, unsupported stance, and unreachable target
+
+PHASE 0.A OFFLINE CHECKS: ALL PASS
+----------------------------------

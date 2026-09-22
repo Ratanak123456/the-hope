@@ -1,0 +1,24 @@
+{
+  "name": "Pass 1 Human Comparison",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": {
+        "$path": "/home/ichigo/Downloads/the-hope-prototype/src/shared"
+      },
+      "ReviewModules": {
+        "$path": "/home/ichigo/Downloads/the-hope-prototype/src/client/NorthPole",
+        "BaselineCast": {
+          "$path": "/home/ichigo/Downloads/the-hope-prototype/docs/visual-rebuild/baseline-20260915/Cast.lua"
+        }
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Review": {
+          "$path": "/home/ichigo/Downloads/the-hope-prototype/tools/visual-review/Review.client.lua"
+        }
+      }
+    }
+  }
+}
