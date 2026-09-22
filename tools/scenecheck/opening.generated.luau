@@ -704,7 +704,7 @@ typeof=function(value)
  end
  return rawTypeof(value)
 end
-RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,Env=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
+RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,Env=true,CharacterAppearance=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
 MOD.Signal=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -2190,16 +2190,28 @@ local function exterior(env,rng)
   across a field. Two masts, a lit sign, a boom and a guard box: the moment
   the trucks pass this, the audience knows they have arrived.
  ]]
+ --[[
+  Grouped, because the arrival crane has to be able to say "the gate belongs in
+  front of the convoy". It does: the whole point of the shot is watching the
+  trucks drive THROUGH this. Measured in Studio, the sign crossed the sightline
+  for two frames as the lead truck passed under it, Camera.applyShot found the
+  framing blocked, collapsed it, and then held a 54-degree orbit for the
+  remaining third of the take - one deliberate crane turning into two shots,
+  from two frames of an object the shot is deliberately shooting past. That is
+  exactly what `shot.foreground` exists for.
+ ]]
+ local gate=Kit.model("Gate",root)
  for _,side in {-1,1} do
-  Kit.beam(root,"GateMast",o+V(side*(ROUTE_HALF+1),0,GATE_Z),o+V(side*(ROUTE_HALF+1),9,GATE_Z),0.5,C.metal)
-  lamp(root,CF(o+V(side*(ROUTE_HALF+0.4),8.2,GATE_Z+0.6))*A(-0.5,0,0),C.warm,26,1.6)
+  Kit.beam(gate,"GateMast",o+V(side*(ROUTE_HALF+1),0,GATE_Z),o+V(side*(ROUTE_HALF+1),9,GATE_Z),0.5,C.metal)
+  lamp(gate,CF(o+V(side*(ROUTE_HALF+0.4),8.2,GATE_Z+0.6))*A(-0.5,0,0),C.warm,26,1.6)
  end
- Kit.beam(root,"GateSpan",o+V(-(ROUTE_HALF+1),8.6,GATE_Z),o+V(ROUTE_HALF+1,8.6,GATE_Z),0.4,C.metal)
- local gateSign=part(root,"GateSign",V(11,2.1,0.24),CF(o+V(0,7.2,GATE_Z+0.2)),C.hullDark)
+ Kit.beam(gate,"GateSpan",o+V(-(ROUTE_HALF+1),8.6,GATE_Z),o+V(ROUTE_HALF+1,8.6,GATE_Z),0.4,C.metal)
+ local gateSign=part(gate,"GateSign",V(11,2.1,0.24),CF(o+V(0,7.2,GATE_Z+0.2)),C.hullDark)
  Kit.label(gateSign,"ARCTIC EXPEDITION SEVEN\n88° N  ·  RESTRICTED",C.hiVis)
- part(root,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-7.2,5.6,GATE_Z-1.8))*A(0,0,math.rad(-90)),C.hiVis)
- part(root,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-7.2,1.2,GATE_Z-1.8)),C.hullDark)
- local shack=Kit.model("GateHut",root)
+ part(gate,"BoomBarrier",V(9,0.3,0.3),CF(o+V(-7.2,5.6,GATE_Z-1.8))*A(0,0,math.rad(-90)),C.hiVis)
+ part(gate,"BoomCounterweight",V(0.8,0.8,0.8),CF(o+V(-7.2,1.2,GATE_Z-1.8)),C.hullDark)
+ env.gate=gate
+ local shack=Kit.model("GateHut",gate)
  part(shack,"Hut",V(3.4,3.4,3.2),CF(o+V(ROUTE_HALF+3.4,1.9,GATE_Z-3)),C.hull)
  part(shack,"HutRoof",V(3.9,0.3,3.7),CF(o+V(ROUTE_HALF+3.4,3.7,GATE_Z-3)),C.hullDark)
  part(shack,"HutWindow",V(0.12,1.2,2),CF(o+V(ROUTE_HALF+1.7,2.4,GATE_Z-3)),C.warm,Enum.Material.Neon,nil,0.35)
@@ -2249,7 +2261,13 @@ local function exterior(env,rng)
  ]]
  for i=1,14 do
   local side=i%2==0 and 1 or -1
-  local x=side*rng:NextNumber(26,76)
+  -- Inner edge clears the corridor. At 26 studs out with a width of up to 34,
+  -- a ridge reached x=9 - two studs off the roadbed's own edge and fifteen
+  -- studs tall, which is a canyon wall, not relief, and it is what put
+  -- 01_BlackRadio's low lens behind a wall of ice for its whole length. From
+  -- 44 the nearest face is 27 studs out. ONE draw, same position in the
+  -- sequence, so nothing downstream of this loop shifts.
+  local x=side*rng:NextNumber(44,92)
   local z=118+i*6.5+rng:NextNumber(-6,6)
   local h=rng:NextNumber(9,21)
   part(root,"NearIceRidge",V(rng:NextNumber(18,34),h,rng:NextNumber(20,40)),CF(o+V(x,h*0.34-3,z))*A(0,rng:NextNumber(-0.6,0.6),side*0.09),C.ice:Lerp(C.snow,rng:NextNumber(0.3,0.8)),Enum.Material.Ice,"wedge")
@@ -2978,6 +2996,662 @@ end
 return Env
 
 end)()
+MOD.CharacterAppearance=(function()
+local script={Parent=ParentProxy}
+local require=req
+--!strict
+--[[
+	WHO EVERY HUMAN IN THE OPENING IS, AS DATA.
+
+	This module owns NO instances, NO joints and NO animation. It is the
+	answer to "what does this person look like", and nothing else; Cast.lua
+	reads it and builds the geometry, exactly as it always did, on the same
+	rig, with the same Motor6D hierarchy, joint directions, limits and
+	grounding.
+
+	It exists because the alternative was losing. Every human was being built
+	from one `buildHuman` body with one flat rectangular hair cap, one face,
+	one collar, one chest badge, one belt, one scanner and one backpack, and
+	then told apart by recolouring four values. Twenty-four people built that
+	way are one mannequin twenty-four times: freeze any medium shot and the
+	only thing separating the lead scientist from a background technician is
+	hue. Character-specific code was starting to pile up inside buildHuman as
+	`if r.kind=="Lyra"` branches, which is the shape of a problem that only
+	gets worse with the next character.
+
+	So: identity is a PROFILE, profiles are data, and the data is indexed
+	deterministically. A background scientist looks the same on every replay
+	because their appearance comes from their index, never from `rng` - the
+	audience should be able to learn a face, and an `rng` that reshuffles
+	hair and build every time the cinematic runs makes that impossible.
+
+	THE VISUAL LANGUAGE IS ROBLOX, deliberately. Simple blocks, strong
+	silhouettes, clear hair shapes, small controlled detail counts. No
+	realistic noses, lips, ears or sculpted faces - the face stays the flat
+	block language a default avatar reads as, and the variation below is a
+	few tenths of a stud, not anatomy. Nothing here uses an external asset
+	id; every shape is procedural, the same rule the rest of the project
+	works under.
+
+	THE ACCEPTANCE TEST THIS DATA IS AIMED AT: rendered as flat grey, with
+	subtitles off, Lyra, Voss and Hale must still be tellable apart by
+	outline alone. That is why the three of them take different hair
+	families, different head coverage, different shoulder treatments and
+	different things in their hands, rather than three shades of the same
+	coat.
+]]
+
+local Appearance = {}
+
+export type HairStyle =
+	"LayeredBob"
+	| "ShortWolf"
+	| "SidePart"
+	| "CrewCut"
+	| "Undercut"
+	| "MessyCrop"
+	| "CurlyTop"
+	| "TiedBack"
+	| "Bald"
+
+export type Headwear = "Helmet" | "Hood" | "HardHat"
+
+export type FaceStyle = "Soft" | "Sharp" | "Mature" | "Neutral"
+
+export type BodyStyle = "Light" | "Average" | "Broad" | "Compact"
+
+export type OutfitStyle =
+	"LeadResearcher"
+	| "Researcher"
+	| "Analyst"
+	| "Commander"
+	| "Technician"
+	| "FieldWorker"
+	| "Security"
+
+export type Eyewear = "Glasses" | "Goggles" | "ARLens" | "GogglesUp"
+
+-- One block of hair. `at` is in HEAD-LOCAL space at scale 1; Cast multiplies
+-- by the character's scale and welds it to the head, so it turns when the
+-- head turns and can never be left behind.
+export type HairPiece = {
+	name: string,
+	size: Vector3,
+	at: CFrame,
+	kind: string?,
+}
+
+export type FaceMetrics = {
+	eyeWidth: number,
+	eyeHeight: number,
+	eyeSpacing: number,
+	browWidth: number,
+	browThickness: number,
+	browHeight: number,
+	browTilt: number,
+	mouthWidth: number,
+}
+
+-- Width multipliers ONLY. Nothing here touches a joint offset, a pivot or a
+-- limb LENGTH: the animation system was stabilised against the current rig's
+-- geometry (sole drop, knee/elbow bend direction, hand-clear-of-torso) and a
+-- silhouette pass is not the place to move any of that. Build reads as a
+-- visual overlay plus a few percent of torso and arm thickness.
+export type BodyMetrics = {
+	torsoWidth: number,
+	armWidth: number,
+	shoulderPad: number,
+}
+
+export type Profile = {
+	hairStyle: HairStyle,
+	hairColor: Color3,
+	faceStyle: FaceStyle,
+	bodyStyle: BodyStyle,
+	outfitStyle: OutfitStyle,
+
+	skin: Color3,
+	coat: Color3,
+	pants: Color3,
+	trim: Color3,
+	accent: Color3?,
+
+	scale: number,
+
+	headwear: Headwear?,
+	eyewear: Eyewear?,
+	equipment: { string },
+}
+
+local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
+local function rgb(r: number, g: number, b: number): Color3
+	return Color3.fromRGB(r, g, b)
+end
+
+--------------------------------------------------------------------------------
+-- PALETTE
+--
+-- Everything here obeys Cast.lua's albedo budget (see its note): no garment
+-- brighter than ~152, no skin brighter than ~204, and the brightest thing in
+-- frame should be a light source rather than a person. Hair is naturally the
+-- darkest large surface on a head and stays that way.
+--------------------------------------------------------------------------------
+
+local HAIR = {
+	black = rgb(28, 24, 24),
+	darkBrown = rgb(38, 27, 22),
+	brown = rgb(64, 45, 33),
+	lightBrown = rgb(96, 72, 50),
+	auburn = rgb(86, 46, 34),
+	sandy = rgb(124, 103, 70),
+	ash = rgb(92, 92, 96),
+	grey = rgb(141, 143, 142),
+}
+
+local SKIN = {
+	fair = rgb(203, 168, 143),
+	warm = rgb(176, 132, 100),
+	light = rgb(194, 166, 141),
+	tan = rgb(187, 140, 111),
+	olive = rgb(168, 126, 96),
+	brown = rgb(157, 112, 83),
+	deep = rgb(105, 73, 55),
+	rich = rgb(139, 99, 74),
+}
+
+local CLOTH = {
+	field = rgb(150, 153, 144), -- the existing expedition parka grey
+	parka = rgb(138, 121, 101), -- Lyra: warmer and a shade darker than the rest
+	navy = rgb(37, 48, 65), -- Voss
+	command = rgb(31, 36, 43), -- Hale, darker and flatter than any coat
+	slate = rgb(74, 84, 92),
+	canvas = rgb(112, 108, 95),
+	ice = rgb(120, 141, 155),
+	dark = rgb(25, 32, 39),
+	metal = rgb(53, 65, 71),
+	orange = rgb(177, 106, 61),
+	rust = rgb(132, 66, 62),
+	ivory = rgb(184, 184, 173),
+	hiVis = rgb(151, 116, 52),
+}
+
+Appearance.Hair = HAIR
+Appearance.Skin = SKIN
+Appearance.Cloth = CLOTH
+
+--------------------------------------------------------------------------------
+-- HAIR
+--
+-- Two to six pieces per style, never more. The old single cap was one block
+-- the width of the skull, which reads as a helmet at any distance and is
+-- identical on everybody; these are built so the OUTLINE differs - where the
+-- volume sits, how far down the sides come, whether there is a nape, whether
+-- the fringe is centred.
+--
+-- The head is 0.8 x 0.85 x 0.8 and the rig faces -Z, so the face sits at
+-- z = -0.39..-0.40 with the brows at y = 0.17..0.21. Every fringe below
+-- therefore bottoms out at y >= 0.21: a fringe that hangs any lower crosses
+-- its own eyebrows, which is the classic procedural-hair failure.
+--------------------------------------------------------------------------------
+
+local HAIR_STYLES: { [string]: { HairPiece } } = {
+	-- Lyra. Short layered bob: full crown, side layers ending around the jaw,
+	-- a short nape, and a deliberately ASYMMETRIC fringe - the left layer is
+	-- longer than the right, so her three-quarter outline is not the mirror
+	-- of itself and reads as a specific person rather than a hair preset.
+	LayeredBob = {
+		{ name = "HairCrown", size = V(0.90, 0.26, 0.88), at = CF(0, 0.35, 0.04) },
+		-- The side layers sit PROUD of the skull (the head is 0.8 wide, these
+		-- are centred at 0.41), because a bob that stops at the skull line
+		-- reads as a swim cap. This is what makes her head wider than Voss's
+		-- in outline and not only in colour.
+		{ name = "HairSideLeft", size = V(0.24, 0.56, 0.64), at = CF(-0.41, 0.06, 0.05) },
+		{ name = "HairSideRight", size = V(0.22, 0.42, 0.60), at = CF(0.41, 0.14, 0.06) },
+		{ name = "HairBack", size = V(0.78, 0.44, 0.22), at = CF(0, 0.05, 0.39) },
+		{ name = "HairFringe", size = V(0.50, 0.22, 0.14), at = CF(-0.12, 0.31, -0.40) * A(0, 0, math.rad(-11)) },
+	},
+	-- Shorter and choppier than the bob, with a longer nape. Reads as a
+	-- modern short cut on anyone, which is the point: it is assigned to both
+	-- male- and female-presenting characters below.
+	ShortWolf = {
+		{ name = "HairCrown", size = V(0.86, 0.26, 0.86), at = CF(0, 0.34, 0.03) },
+		{ name = "HairSideLeft", size = V(0.16, 0.42, 0.56), at = CF(-0.38, 0.13, 0.06) },
+		{ name = "HairSideRight", size = V(0.16, 0.38, 0.54), at = CF(0.38, 0.15, 0.07) },
+		{ name = "HairNape", size = V(0.56, 0.32, 0.17), at = CF(0, -0.03, 0.40) },
+		{ name = "HairFringe", size = V(0.50, 0.18, 0.13), at = CF(0.08, 0.32, -0.39) * A(0, 0, math.rad(7)) },
+	},
+	-- Voss. Controlled, combed, one heavy sweep over a low part; the tight
+	-- temple strips are what make it read as "kept" rather than "short".
+	SidePart = {
+		{ name = "HairCrown", size = V(0.84, 0.22, 0.84), at = CF(0, 0.36, 0.03) },
+		{ name = "HairSweep", size = V(0.52, 0.20, 0.28), at = CF(-0.13, 0.38, -0.27) * A(0, 0, math.rad(-12)) },
+		{ name = "HairPartSide", size = V(0.22, 0.15, 0.30), at = CF(0.32, 0.33, -0.19) },
+		{ name = "HairBack", size = V(0.74, 0.22, 0.15), at = CF(0, 0.22, 0.40) },
+		{ name = "HairTempleLeft", size = V(0.07, 0.20, 0.56), at = CF(-0.395, 0.22, 0.06) },
+		{ name = "HairTempleRight", size = V(0.07, 0.20, 0.56), at = CF(0.395, 0.22, 0.06) },
+	},
+	-- Hale. Almost no volume: a short crown, a slightly raised front, and hair
+	-- that sits LOW on the sides. Two pieces would have read as a swim cap;
+	-- the low side strips are what make it military.
+	CrewCut = {
+		{ name = "HairCrown", size = V(0.84, 0.18, 0.84), at = CF(0, 0.37, 0.02) },
+		{ name = "HairFront", size = V(0.72, 0.13, 0.17), at = CF(0, 0.40, -0.33) },
+		{ name = "HairSideLeft", size = V(0.07, 0.26, 0.66), at = CF(-0.395, 0.16, 0.05) },
+		{ name = "HairSideRight", size = V(0.07, 0.26, 0.66), at = CF(0.395, 0.16, 0.05) },
+		{ name = "HairNape", size = V(0.70, 0.20, 0.09), at = CF(0, 0.14, 0.40) },
+	},
+	-- Tall on top, shaved at the temples. The strongest vertical of the set,
+	-- so it is the one background silhouette that is unmistakable in a crowd.
+	Undercut = {
+		{ name = "HairTop", size = V(0.72, 0.36, 0.78), at = CF(0, 0.41, 0.04) },
+		{ name = "HairShaveLeft", size = V(0.06, 0.24, 0.62), at = CF(-0.40, 0.19, 0.05) },
+		{ name = "HairShaveRight", size = V(0.06, 0.24, 0.62), at = CF(0.40, 0.19, 0.05) },
+		{ name = "HairBack", size = V(0.62, 0.17, 0.13), at = CF(0, 0.28, 0.40) },
+	},
+	-- Deliberately off-axis: the two tufts are rotated against each other so
+	-- the outline is lopsided from every angle.
+	MessyCrop = {
+		{ name = "HairCrown", size = V(0.84, 0.24, 0.82), at = CF(0, 0.35, 0.02) },
+		{ name = "HairTuftLeft", size = V(0.34, 0.18, 0.30), at = CF(-0.18, 0.44, -0.09) * A(0, 0, math.rad(11)) },
+		{ name = "HairTuftRight", size = V(0.30, 0.16, 0.28), at = CF(0.20, 0.43, 0.11) * A(0, 0, math.rad(-15)) },
+		{ name = "HairFringe", size = V(0.52, 0.16, 0.13), at = CF(0.04, 0.33, -0.39) * A(0, 0, math.rad(6)) },
+		{ name = "HairBack", size = V(0.70, 0.24, 0.15), at = CF(0, 0.20, 0.40) },
+	},
+	-- FIVE rounded pieces, not fifty. The environment pass had just finished
+	-- deleting a snowfield made of overlapping spheres; a head is not the
+	-- place to reintroduce that. A flat base carries the hairline and four
+	-- controlled puffs carry the volume.
+	CurlyTop = {
+		{ name = "HairBase", size = V(0.86, 0.26, 0.86), at = CF(0, 0.34, 0.03) },
+		{ name = "HairCurlLeft", size = V(0.44, 0.40, 0.44), at = CF(-0.23, 0.46, -0.05), kind = "ball" },
+		{ name = "HairCurlRight", size = V(0.42, 0.38, 0.42), at = CF(0.24, 0.47, 0.05), kind = "ball" },
+		{ name = "HairCurlBack", size = V(0.40, 0.36, 0.40), at = CF(0, 0.47, 0.25), kind = "ball" },
+		{ name = "HairCurlFront", size = V(0.36, 0.32, 0.36), at = CF(0, 0.44, -0.25), kind = "ball" },
+	},
+	-- Smooth over the crown, gathered at the nape, with a short tail. Medium
+	-- length worn UP, so it is a different outline to the bob without being
+	-- "the long-haired one".
+	TiedBack = {
+		{ name = "HairCrown", size = V(0.86, 0.24, 0.84), at = CF(0, 0.35, 0.03) },
+		{ name = "HairSideLeft", size = V(0.12, 0.30, 0.60), at = CF(-0.40, 0.21, 0.06) },
+		{ name = "HairSideRight", size = V(0.12, 0.30, 0.60), at = CF(0.40, 0.21, 0.06) },
+		{ name = "HairBand", size = V(0.26, 0.18, 0.20), at = CF(0, 0.12, 0.42) },
+		{ name = "HairTail", size = V(0.24, 0.46, 0.22), at = CF(0, -0.10, 0.46) * A(math.rad(-8), 0, 0) },
+	},
+	Bald = {},
+}
+
+--------------------------------------------------------------------------------
+-- HEADWEAR, worn OVER hair rather than instead of it.
+--
+-- Helmeted characters below are always given a tight hair style, so what
+-- shows under the shell is a hairline at the temples rather than a block
+-- fighting its way out through the crown.
+--------------------------------------------------------------------------------
+
+local HEADWEAR: { [string]: { HairPiece } } = {
+	Helmet = {
+		{ name = "HelmetShell", size = V(0.94, 0.46, 0.92), at = CF(0, 0.31, 0.02) },
+		{ name = "HelmetBrim", size = V(0.96, 0.09, 0.26), at = CF(0, 0.15, -0.35) },
+		{ name = "HelmetNape", size = V(0.88, 0.22, 0.15), at = CF(0, 0.05, 0.40) },
+	},
+	HardHat = {
+		{ name = "HardHatShell", size = V(0.92, 0.40, 0.90), at = CF(0, 0.33, 0.02) },
+		{ name = "HardHatCrest", size = V(0.16, 0.14, 0.86), at = CF(0, 0.52, 0.02) },
+		{ name = "HardHatBrim", size = V(0.94, 0.08, 0.30), at = CF(0, 0.17, -0.38) },
+	},
+	Hood = {
+		{ name = "HoodShell", size = V(0.98, 0.50, 0.94), at = CF(0, 0.28, 0.07) },
+		{ name = "HoodRim", size = V(0.94, 0.16, 0.14), at = CF(0, 0.36, -0.38) },
+		{ name = "HoodDrapeLeft", size = V(0.14, 0.42, 0.50), at = CF(-0.44, 0.08, 0.10) },
+		{ name = "HoodDrapeRight", size = V(0.14, 0.42, 0.50), at = CF(0.44, 0.08, 0.10) },
+	},
+}
+
+--------------------------------------------------------------------------------
+-- FACES
+--
+-- Four presets, all within a few hundredths of a stud of each other. This is
+-- deliberately conservative: the brief is a stylized Roblox face, and the
+-- distance between "these two people are different" and "this person is a
+-- caricature" is very small at this scale. Identity is carried by hair,
+-- clothing and silhouette; the face only has to stop being literally
+-- identical on twenty-four heads.
+--------------------------------------------------------------------------------
+
+local FACES: { [string]: FaceMetrics } = {
+	Neutral = {
+		eyeWidth = 0.16, eyeHeight = 0.14, eyeSpacing = 0.16,
+		browWidth = 0.18, browThickness = 0.04, browHeight = 0.19, browTilt = 0,
+		mouthWidth = 0.20,
+	},
+	Soft = {
+		eyeWidth = 0.17, eyeHeight = 0.155, eyeSpacing = 0.155,
+		browWidth = 0.17, browThickness = 0.035, browHeight = 0.205, browTilt = 0.05,
+		mouthWidth = 0.19,
+	},
+	Sharp = {
+		eyeWidth = 0.155, eyeHeight = 0.115, eyeSpacing = 0.168,
+		browWidth = 0.195, browThickness = 0.038, browHeight = 0.178, browTilt = -0.06,
+		mouthWidth = 0.19,
+	},
+	Mature = {
+		eyeWidth = 0.145, eyeHeight = 0.105, eyeSpacing = 0.172,
+		browWidth = 0.215, browThickness = 0.055, browHeight = 0.172, browTilt = -0.025,
+		mouthWidth = 0.22,
+	},
+}
+
+local BODIES: { [string]: BodyMetrics } = {
+	Light = { torsoWidth = 0.94, armWidth = 0.95, shoulderPad = 0 },
+	Average = { torsoWidth = 1, armWidth = 1, shoulderPad = 0 },
+	Broad = { torsoWidth = 1.07, armWidth = 1.05, shoulderPad = 0.16 },
+	Compact = { torsoWidth = 1.04, armWidth = 1.02, shoulderPad = 0.08 },
+}
+
+function Appearance.hair(style: HairStyle): { HairPiece }
+	return HAIR_STYLES[style] or HAIR_STYLES.CrewCut
+end
+
+function Appearance.headwear(kind: Headwear): { HairPiece }
+	return HEADWEAR[kind] or {}
+end
+
+function Appearance.face(style: FaceStyle): FaceMetrics
+	return FACES[style] or FACES.Neutral
+end
+
+function Appearance.body(style: BodyStyle): BodyMetrics
+	return BODIES[style] or BODIES.Average
+end
+
+function Appearance.hairStyles(): { string }
+	local names = {}
+	for name in HAIR_STYLES do
+		table.insert(names, name)
+	end
+	table.sort(names)
+	return names
+end
+
+--------------------------------------------------------------------------------
+-- THE THREE LEADS
+--
+-- Read these as three OUTLINES rather than three costumes:
+--
+--   Lyra  - widest head shape (layered bob down to the jaw), narrowest
+--           shoulders, one small thing in one hand, nothing on her back.
+--   Voss  - tightest head shape, tallest, one strong vertical (the scarf)
+--           down an otherwise clean front, a flat tablet held in close.
+--   Hale  - smallest head shape (cropped, no volume), widest shoulders by a
+--           clear margin, a long horizontal (the slung rifle) across his hip.
+--
+-- Hair volume, shoulder width and held silhouette all disagree between the
+-- three, which is what survives being rendered as flat grey.
+--------------------------------------------------------------------------------
+
+local LEADS: { [string]: Profile } = {
+	Lyra = {
+		hairStyle = "LayeredBob",
+		hairColor = HAIR.darkBrown,
+		faceStyle = "Soft",
+		-- Average, not Light: Voss is the narrow one, and two leads sharing a
+		-- build meant their silhouettes differed only from the neck up.
+		bodyStyle = "Average",
+		outfitStyle = "LeadResearcher",
+		skin = SKIN.warm,
+		coat = CLOTH.parka,
+		pants = CLOTH.dark,
+		trim = CLOTH.orange,
+		accent = CLOTH.orange,
+		scale = 1,
+		-- A single temple lens, never Voss's two. They used to wear the exact
+		-- same pair of cyan rectangles, which made the two scientists in the
+		-- room read as a matched set at any distance over about six studs.
+		eyewear = "ARLens",
+		equipment = { "Scanner", "HipPouch", "ShoulderStrap" },
+	},
+	Voss = {
+		hairStyle = "SidePart",
+		hairColor = HAIR.black,
+		faceStyle = "Sharp",
+		bodyStyle = "Light",
+		outfitStyle = "Analyst",
+		skin = SKIN.light,
+		coat = CLOTH.navy,
+		pants = CLOTH.dark,
+		trim = CLOTH.ivory,
+		accent = CLOTH.ice,
+		scale = 1.06,
+		eyewear = "Glasses",
+		equipment = { "Scarf", "Tablet" },
+	},
+	Hale = {
+		hairStyle = "CrewCut",
+		hairColor = HAIR.grey,
+		faceStyle = "Mature",
+		bodyStyle = "Broad",
+		outfitStyle = "Commander",
+		skin = SKIN.tan,
+		coat = CLOTH.command,
+		pants = CLOTH.metal,
+		trim = CLOTH.rust,
+		accent = CLOTH.rust,
+		scale = 1.12,
+		-- No scanner, no expedition pack. He used to carry the identical
+		-- scientist kit, which is most of why the senior officer read as a
+		-- third researcher.
+		equipment = { "ShoulderYoke", "RankMarker", "HeavyBelt", "SlungRifle" },
+	},
+}
+
+function Appearance.lead(name: string): Profile
+	local profile = LEADS[name]
+	assert(profile, `no lead appearance profile named {name}`)
+	return profile
+end
+
+--------------------------------------------------------------------------------
+-- THE EIGHT LAB SCIENTISTS
+--
+-- Indexed, never randomised: scientist 3 is the same person with the same
+-- curls on every replay. Six hair families across eight people, and hair
+-- length is NOT assigned by gender presentation - short layered, cropped and
+-- undercut styles sit on female-presenting characters here as ordinary
+-- choices, and the longest style in the group (TiedBack) is not reserved for
+-- them either.
+--
+-- Equipment is what actually breaks the clone effect: four of the eight carry
+-- nothing at all, because a lab technician at a console has their hands on
+-- the console.
+--------------------------------------------------------------------------------
+
+local SCIENTISTS: { Profile } = {
+	{
+		hairStyle = "LayeredBob", hairColor = HAIR.darkBrown, faceStyle = "Soft",
+		bodyStyle = "Light", outfitStyle = "Researcher",
+		skin = SKIN.fair, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 0.96, equipment = { "Tablet" },
+	},
+	{
+		hairStyle = "SidePart", hairColor = HAIR.black, faceStyle = "Sharp",
+		bodyStyle = "Average", outfitStyle = "Analyst",
+		skin = SKIN.brown, coat = CLOTH.ice, pants = CLOTH.dark, trim = CLOTH.ivory,
+		scale = 1.02, eyewear = "Glasses", equipment = { "HipPouch" },
+	},
+	{
+		hairStyle = "CurlyTop", hairColor = HAIR.black, faceStyle = "Neutral",
+		bodyStyle = "Broad", outfitStyle = "Technician",
+		skin = SKIN.deep, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 1.04, equipment = { "SmallPack", "Radio" },
+	},
+	{
+		hairStyle = "TiedBack", hairColor = HAIR.brown, faceStyle = "Soft",
+		bodyStyle = "Average", outfitStyle = "Researcher",
+		skin = SKIN.tan, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.ivory,
+		scale = 0.99, equipment = {},
+	},
+	{
+		hairStyle = "MessyCrop", hairColor = HAIR.sandy, faceStyle = "Neutral",
+		bodyStyle = "Compact", outfitStyle = "Technician",
+		skin = SKIN.olive, coat = CLOTH.canvas, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 0.94, eyewear = "GogglesUp", equipment = { "ToolRoll" },
+	},
+	{
+		hairStyle = "ShortWolf", hairColor = HAIR.auburn, faceStyle = "Sharp",
+		bodyStyle = "Light", outfitStyle = "Analyst",
+		skin = SKIN.light, coat = CLOTH.ice, pants = CLOTH.dark, trim = CLOTH.ivory,
+		scale = 0.97, equipment = { "Scanner" },
+	},
+	{
+		hairStyle = "Undercut", hairColor = HAIR.ash, faceStyle = "Mature",
+		bodyStyle = "Average", outfitStyle = "Technician",
+		skin = SKIN.rich, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 1.01, equipment = { "Radio" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.lightBrown, faceStyle = "Neutral",
+		bodyStyle = "Broad", outfitStyle = "Researcher",
+		skin = SKIN.warm, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 1.05, equipment = {},
+	},
+}
+
+function Appearance.scientist(index: number): Profile
+	return SCIENTISTS[(index - 1) % #SCIENTISTS + 1]
+end
+
+--------------------------------------------------------------------------------
+-- SECURITY
+--
+-- One faction language - same helmet family, same webbing, same dark palette -
+-- in three silhouettes, so they read as a unit without reading as a stamped
+-- copy. Variation is clothing and kit, never joint geometry.
+--
+--   LightScout       no chest plate, goggles down, rifle carried
+--   Standard         neck guard, rifle slung
+--   HeavyLead        chest plate and shoulder pads, the widest of the three
+--
+-- One of the eight (index 6) has his helmet off, which is the cheapest way to
+-- tell the audience these are people rather than equipment.
+--------------------------------------------------------------------------------
+
+local SOLDIERS: { Profile } = {
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.black, faceStyle = "Neutral",
+		bodyStyle = "Average", outfitStyle = "Security",
+		skin = SKIN.tan, coat = CLOTH.metal, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 1.02, headwear = "Helmet", equipment = { "Webbing", "NeckGuard", "SlungRifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.brown, faceStyle = "Sharp",
+		bodyStyle = "Light", outfitStyle = "Security",
+		skin = SKIN.fair, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 0.97, headwear = "Helmet", eyewear = "Goggles", equipment = { "Webbing", "Rifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.ash, faceStyle = "Mature",
+		bodyStyle = "Broad", outfitStyle = "Security",
+		skin = SKIN.brown, coat = CLOTH.metal, pants = CLOTH.dark, trim = CLOTH.rust,
+		scale = 1.09, headwear = "Helmet", eyewear = "Goggles",
+		equipment = { "ChestPlate", "ShoulderYoke", "Webbing", "SlungRifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.darkBrown, faceStyle = "Neutral",
+		bodyStyle = "Average", outfitStyle = "Security",
+		skin = SKIN.deep, coat = CLOTH.metal, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 1.01, headwear = "Helmet", equipment = { "Webbing", "NeckGuard", "SlungRifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.sandy, faceStyle = "Sharp",
+		bodyStyle = "Light", outfitStyle = "Security",
+		skin = SKIN.olive, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 0.98, headwear = "Helmet", equipment = { "Webbing", "Rifle" },
+	},
+	{
+		-- Helmet off. Same uniform, visible face.
+		hairStyle = "MessyCrop", hairColor = HAIR.lightBrown, faceStyle = "Neutral",
+		bodyStyle = "Average", outfitStyle = "Security",
+		skin = SKIN.light, coat = CLOTH.metal, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 1.03, eyewear = "GogglesUp", equipment = { "Webbing", "NeckGuard", "SlungRifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.black, faceStyle = "Mature",
+		bodyStyle = "Broad", outfitStyle = "Security",
+		skin = SKIN.rich, coat = CLOTH.metal, pants = CLOTH.dark, trim = CLOTH.rust,
+		scale = 1.08, headwear = "Helmet", eyewear = "Goggles",
+		equipment = { "ChestPlate", "ShoulderYoke", "Webbing", "SlungRifle" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.ash, faceStyle = "Neutral",
+		bodyStyle = "Average", outfitStyle = "Security",
+		skin = SKIN.warm, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.metal,
+		scale = 1, headwear = "Helmet", equipment = { "Webbing", "NeckGuard", "Rifle" },
+	},
+}
+
+function Appearance.soldier(index: number): Profile
+	return SOLDIERS[(index - 1) % #SOLDIERS + 1]
+end
+
+--------------------------------------------------------------------------------
+-- EXCAVATION CREW
+--
+-- Not recoloured scientists: hard hats rather than parka hoods, a hi-vis
+-- vest, a heavy tool belt, gloves and knee pads. Worker 1 keeps a scanner
+-- because two shots (07c_SampleCollection, 07d_CompassAnomaly) frame it by
+-- name and one of them recolours it every frame.
+--------------------------------------------------------------------------------
+
+local WORKERS: { Profile } = {
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.brown, faceStyle = "Neutral",
+		bodyStyle = "Average", outfitStyle = "FieldWorker",
+		skin = SKIN.tan, coat = CLOTH.canvas, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 1, headwear = "HardHat", eyewear = "Goggles",
+		equipment = { "Vest", "ToolBelt", "KneePads", "Scanner" },
+	},
+	{
+		hairStyle = "MessyCrop", hairColor = HAIR.black, faceStyle = "Mature",
+		bodyStyle = "Broad", outfitStyle = "FieldWorker",
+		skin = SKIN.deep, coat = CLOTH.canvas, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 1.06, headwear = "HardHat",
+		equipment = { "Vest", "ToolBelt", "KneePads", "ToolCase" },
+	},
+	{
+		hairStyle = "Bald", hairColor = HAIR.black, faceStyle = "Neutral",
+		bodyStyle = "Compact", outfitStyle = "FieldWorker",
+		skin = SKIN.olive, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 0.95, headwear = "Hood",
+		equipment = { "Vest", "ToolBelt", "CableCoil" },
+	},
+	{
+		hairStyle = "CrewCut", hairColor = HAIR.sandy, faceStyle = "Sharp",
+		bodyStyle = "Average", outfitStyle = "FieldWorker",
+		skin = SKIN.fair, coat = CLOTH.canvas, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 0.99, headwear = "HardHat", eyewear = "GogglesUp",
+		equipment = { "Vest", "ToolBelt", "HelmetLamp", "Radio" },
+	},
+	{
+		hairStyle = "ShortWolf", hairColor = HAIR.auburn, faceStyle = "Neutral",
+		bodyStyle = "Light", outfitStyle = "FieldWorker",
+		skin = SKIN.brown, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.hiVis,
+		scale = 0.96, headwear = "HardHat",
+		equipment = { "Vest", "ToolBelt", "ToolCase" },
+	},
+}
+
+function Appearance.worker(index: number): Profile
+	return WORKERS[(index - 1) % #WORKERS + 1]
+end
+
+Appearance.ScientistCount = #SCIENTISTS
+Appearance.SoldierCount = #SOLDIERS
+Appearance.WorkerCount = #WORKERS
+
+return Appearance
+
+end)()
 MOD.Cast=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -2989,6 +3663,7 @@ local Kit=require(script.Parent.Kit)
 local Config=require(game:GetService("ReplicatedStorage").Shared.Config)
 local RunService=game:GetService("RunService")
 local C=require(script.Parent.Env).Colors
+local Appearance=require(script.Parent.CharacterAppearance)
 local V,CF,A=Vector3.new,CFrame.new,CFrame.Angles
 local Cast={}
 -- Every rig ever built, so ground raycasts can exclude the whole cast at
@@ -3261,112 +3936,342 @@ end
 function Cast.pose(r,name,cf)
  r.poses[name]=cf
 end
--- Roblox-simple face: two flat eyes, brows and a mouth, all plain blocks -
--- no spherical socket/iris/nose/lip/ear anatomy. Character distinction comes
--- from clothing, hair colour, scale and accessories (see buildHuman), not
--- sculpted facial geometry - this should read as a stylized block face, the
--- same visual language a default Roblox avatar's face reads as, never a
--- realistic human mannequin.
-local function face(r,skin,hair,variant)
+--[[
+ THE FACE, parameterised.
+
+ Still the same flat block language: two eyes, two pupils, two brows and a
+ mouth, no spherical sockets, no nose, no lips, no ears. What changed is that
+ the numbers come from a face preset rather than being the same seven
+ literals on all twenty-four heads. The spread between presets is a few
+ hundredths of a stud on purpose - far enough that the leads are not the same
+ face, nowhere near far enough to become caricature.
+]]
+local function face(r,skin,hair,metrics)
  local h=r.head;local s=r.scale
  local function detail(name,size,offset,color)
   return attach(r,h,name,size*s,CF(offset*s),color)
  end
- r.face={brows={}}
+ r.face={brows={},mouthWidth=metrics.mouthWidth}
  for _,side in {-1,1} do
-  detail("Eye",V(0.16,0.14,0.02),V(side*0.16,0.05,-0.395),Color3.fromRGB(245,245,240))
-  detail("Pupil",V(0.07,0.07,0.015),V(side*0.16,0.04,-0.403),C.dark)
-  local brow=detail("Brow",V(0.18,0.04,0.02),V(side*0.16,0.19,-0.39),hair)
-  table.insert(r.face.brows,{part=brow,side=side})
+  detail("Eye",V(metrics.eyeWidth,metrics.eyeHeight,0.02),V(side*metrics.eyeSpacing,0.05,-0.395),Color3.fromRGB(245,245,240))
+  detail("Pupil",V(metrics.eyeWidth*0.44,metrics.eyeHeight*0.5,0.015),V(side*metrics.eyeSpacing,0.04,-0.403),C.dark)
+  local brow=detail("Brow",V(metrics.browWidth,metrics.browThickness,0.02),V(side*metrics.eyeSpacing,metrics.browHeight,-0.39),hair)
+  --[[
+   The brow's RIGID ENTRY, not just its part.
+
+   stepAnimate has always computed a per-expression brow tilt and then written
+   it to a `SetAttribute("ExpressionTilt",...)` that nothing anywhere read, so
+   every angry, sad and frightened face in the cinematic has been rendering
+   with perfectly level eyebrows. Holding the entry (and its rest offset)
+   lets that existing calculation drive the actual geometry, which is a
+   two-line fix to a dead feature rather than a new animation system.
+  ]]
+  local entry=r.rigid[#r.rigid]
+  table.insert(r.face.brows,{part=brow,side=side,entry=entry,base=entry.offset,rest=metrics.browTilt})
  end
- r.face.mouth=detail("Mouth",V(0.2,0.04,0.02),V(0,-0.2,-0.39),skin:Lerp(C.dark,0.55))
- if variant=="Lyra" then
-  detail("HairTie",V(0.3,0.24,0.3),V(0,0.02,0.36),hair)
+ r.face.mouth=detail("Mouth",V(metrics.mouthWidth,0.04,0.02),V(0,-0.2,-0.39),skin:Lerp(C.dark,0.55))
+end
+-- A hair/headwear piece's offset is authored at scale 1; only its POSITION
+-- scales with the character, never its rotation.
+local function scaledOffset(cf,s)
+ local at=cf.Position
+ return CF(at.X*s,at.Y*s,at.Z*s)*(cf-at)
+end
+local function buildPieces(r,host,pieces,colour)
+ for _,piece in pieces do
+  attach(r,host,piece.name,piece.size*r.scale,scaledOffset(piece.at,r.scale),colour,piece.kind)
  end
 end
+--[[
+ EQUIPMENT, chosen by role instead of issued to everybody.
+
+ Every human used to be built with the same TranslationScanner in the same
+ hand and the same ExpeditionPack on the same back - the senior officer
+ included - which is most of the clone effect on its own: twenty-four
+ identical silhouettes carrying identical kit. Now a profile lists what its
+ person carries, four of the eight scientists carry nothing at all, and the
+ things people do carry break their outline in different places: Lyra's
+ scanner is low and forward, Voss's tablet is held in close, Hale's rifle is
+ a long horizontal across his hip.
+
+ Each entry is a handful of parts. Order matters: anything attached to
+ another accessory must be attached AFTER it, because Cast.evaluate walks
+ r.rigid in insertion order and a child read before its parent would lag a
+ frame behind.
+]]
+local EQUIPMENT={}
+EQUIPMENT.Scanner=function(r,p)
+ local s=r.scale
+ r.scanner=attach(r,r.hands.Left,"TranslationScanner",V(0.5,0.12,0.7)*s,CF(0,-0.06*s,-0.24*s)*A(-0.3,0,0),C.metal)
+ attach(r,r.scanner,"ScannerScreen",V(0.38,0.02,0.5)*s,CF(0,0.07*s,0),C.cyan,nil,Enum.Material.Neon)
+end
+EQUIPMENT.Tablet=function(r,p)
+ local s=r.scale
+ local slab=attach(r,r.hands.Left,"FieldTablet",V(0.44,0.06,0.6)*s,CF(0,-0.05*s,-0.2*s)*A(-0.4,0,0),C.metal)
+ attach(r,slab,"TabletScreen",V(0.34,0.02,0.48)*s,CF(0,0.05*s,0),C.cyan,nil,Enum.Material.Neon)
+end
+EQUIPMENT.Radio=function(r,p)
+ local s=r.scale
+ local radio=attach(r,p.lower,"BeltRadio",V(0.2,0.32,0.15)*s,CF(-0.52*s,0.34*s,-0.16*s),C.dark)
+ attach(r,radio,"RadioAntenna",V(0.04,0.32,0.04)*s,CF(0,0.3*s,0),C.metal)
+end
+EQUIPMENT.HipPouch=function(r,p)
+ attach(r,p.lower,"HipPouch",V(0.3,0.3,0.22)*r.scale,CF(0.56*r.scale,0.3*r.scale,0.08*r.scale),p.profile.trim)
+end
+-- A strap, not a pack: it crosses the chest diagonally, so it reads on a
+-- front-on silhouette without adding a slab to the back the way the old
+-- universal ExpeditionPack did.
+EQUIPMENT.ShoulderStrap=function(r,p)
+ attach(r,p.torso,"ShoulderStrap",V(0.16,1.3,0.1)*r.scale,CF(-0.3*r.scale,0.05*r.scale,-0.47*r.scale)*A(0,0,0.26),p.profile.trim)
+end
+EQUIPMENT.SmallPack=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"FieldPack",V(0.78,0.8,0.36)*s,CF(0,-0.05*s,0.55*s),C.metal)
+end
+EQUIPMENT.ToolRoll=function(r,p)
+ attach(r,p.lower,"ToolRoll",V(0.5,0.22,0.2)*r.scale,CF(0,0.36*r.scale,0.44*r.scale),C.dark)
+end
+EQUIPMENT.ToolCase=function(r,p)
+ local s=r.scale
+ local case=attach(r,r.hands.Right,"ToolCase",V(0.48,0.42,0.28)*s,CF(0,-0.34*s,0),C.metal)
+ attach(r,case,"CaseLatch",V(0.5,0.06,0.06)*s,CF(0,0.08*s,-0.15*s),p.profile.trim)
+end
+EQUIPMENT.ToolBelt=function(r,p)
+ local s=r.scale
+ attach(r,p.lower,"ToolBelt",V(1.5*p.width,0.24,0.92*p.width)*s,CF(0,0.34*s,0),C.dark)
+ for _,side in {-1,1} do
+  attach(r,p.lower,"ToolLoop",V(0.16,0.3,0.14)*s,CF(side*0.5*s,0.2*s,-0.3*s),p.profile.trim)
+ end
+end
+EQUIPMENT.CableCoil=function(r,p)
+ attach(r,p.lower,"CableCoil",V(0.5,0.5,0.18)*r.scale,CF(0.5*r.scale,0.3*r.scale,0.3*r.scale),C.dark)
+end
+EQUIPMENT.HelmetLamp=function(r,p)
+ local s=r.scale
+ local lamp=attach(r,r.head,"HelmetLamp",V(0.18,0.14,0.14)*s,CF(0,0.34*s,-0.44*s),C.metal)
+ attach(r,lamp,"LampLens",V(0.12,0.1,0.03)*s,CF(0,0,-0.08*s),C.warm,nil,Enum.Material.Neon)
+end
+EQUIPMENT.KneePads=function(r,p)
+ for _,side in {"Left","Right"} do
+  local shin=r.model:FindFirstChild(side.."LowerLeg")
+  if shin then attach(r,shin,"KneePad",V(0.58,0.3,0.6)*r.scale,CF(0,0.4*r.scale,-0.04*r.scale),C.dark) end
+ end
+end
+-- A hi-vis tabard. One flat panel front and back rather than a second shell
+-- wrapped round the whole torso.
+EQUIPMENT.Vest=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"WorkVestFront",V(1.12*p.width,0.94,0.1)*s,CF(0,0,-0.47*s),p.profile.trim)
+ attach(r,p.torso,"WorkVestBack",V(1.12*p.width,0.94,0.1)*s,CF(0,0,0.47*s),p.profile.trim)
+ -- Shoulder straps close the loop over the top of the torso, which is what
+ -- separates a worn vest from a panel leaning against somebody's chest.
+ for _,side in {-1,1} do
+  attach(r,p.torso,"VestStrap",V(0.24,0.2,1.0)*s,CF(side*0.42*s,0.56*s,0),p.profile.trim)
+ end
+ attach(r,p.torso,"VestStripe",V(1.14*p.width,0.1,0.12)*s,CF(0,-0.3*s,-0.47*s),C.ivory)
+end
+EQUIPMENT.Webbing=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"Webbing",V(1.6*p.width,0.3,0.98*p.width)*s,CF(0,-0.15*s,0),C.dark)
+ for _,side in {-1,1} do
+  attach(r,p.torso,"AmmoPouch",V(0.26,0.28,0.16)*s,CF(side*0.4*s,-0.14*s,-0.5*s),C.metal)
+ end
+end
+EQUIPMENT.NeckGuard=function(r,p)
+ attach(r,p.torso,"NeckGuard",V(0.8,0.34,0.7)*r.scale,CF(0,0.66*r.scale,0.02*r.scale),C.dark)
+end
+EQUIPMENT.ChestPlate=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"ChestPlate",V(1.55*p.width,1.05,0.2)*s,CF(0,0.12*s,-0.46*s),C.metal)
+ attach(r,p.torso,"PlateRidge",V(0.2,1.0,0.1)*s,CF(0,0.12*s,-0.56*s),C.dark)
+end
+-- The single strongest broad-shoulder cue in the set: a yoke across the top
+-- of the torso plus a cap on each upper arm.
+EQUIPMENT.ShoulderYoke=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"ShoulderYoke",V(2.05*p.width,0.26,1.0*p.width)*s,CF(0,0.48*s,0.02*s),p.profile.coat)
+ attach(r,p.torso,"YokeEdge",V(2.07*p.width,0.07,1.02*p.width)*s,CF(0,0.36*s,0.02*s),p.profile.trim)
+ for _,side in {"Left","Right"} do
+  local arm=r.model:FindFirstChild(side.."UpperArm")
+  if arm then attach(r,arm,"ShoulderCap",V(0.72,0.3,0.7)*s,CF(0,0.42*s,0),p.profile.coat,"wedge") end
+ end
+end
+EQUIPMENT.RankMarker=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"RankPlate",V(0.3,0.16,0.06)*s,CF(-0.46*s,0.3*s,-0.47*s),p.profile.accent or p.profile.trim)
+ attach(r,p.torso,"RankBar",V(0.3,0.06,0.06)*s,CF(-0.46*s,0.12*s,-0.47*s),p.profile.accent or p.profile.trim)
+end
+EQUIPMENT.HeavyBelt=function(r,p)
+ local s=r.scale
+ attach(r,p.lower,"CommandBelt",V(1.52*p.width,0.3,0.94*p.width)*s,CF(0,0.34*s,0),C.dark)
+ attach(r,p.lower,"BeltBuckle",V(0.26,0.26,0.1)*s,CF(0,0.34*s,-0.48*s),p.profile.accent or C.ivory)
+ attach(r,p.lower,"SidearmHolster",V(0.26,0.42,0.22)*s,CF(0.5*s,0.1*s,0.06*s),C.dark)
+end
+local function rifle(r,host,offset)
+ local s=r.scale
+ r.weapon=attach(r,host,"ExpeditionRifle",V(0.18,0.26,1.2)*s,offset,C.metal)
+ attach(r,r.weapon,"Barrel",V(0.1,0.1,0.6)*s,CF(0,0,-0.75*s),C.dark)
+ attach(r,r.weapon,"Stock",V(0.22,0.36,0.4)*s,CF(0,-0.05*s,0.65*s),C.dark)
+end
+-- Slung across the hip: a long horizontal, which is a completely different
+-- silhouette cue to a rifle held in the hands.
+EQUIPMENT.SlungRifle=function(r,p)
+ rifle(r,p.lower,CF(0.2*r.scale,-0.1*r.scale,-0.5*r.scale)*A(0,0,0.34))
+end
+EQUIPMENT.Rifle=function(r,p)
+ rifle(r,r.hands.Right,CF(0.06*r.scale,-0.3*r.scale,-0.3*r.scale))
+end
+EQUIPMENT.Scarf=function(r,p)
+ local s=r.scale
+ attach(r,p.torso,"ScarfWrap",V(1.0,0.32,0.98)*s,CF(0,0.5*s,0),p.profile.trim)
+ attach(r,p.torso,"ScarfTail",V(0.4,0.9,0.14)*s,CF(-0.25*s,0.1*s,-0.48*s),p.profile.trim,"wedge")
+end
+--[[
+ OUTFITS - the small set of accent pieces that says what somebody does.
+
+ The body blocks are ALREADY coloured as worn clothing (coat on torso and
+ arms, trousers on legs, dark on hands and feet), so these are a few
+ silhouette-defining pieces on top, never a second bulky shell over the
+ whole R15 body.
+]]
+local function collar(r,p,size,colour)
+ attach(r,p.torso,"Collar",V(size*p.width,0.16,0.92*p.width)*r.scale,CF(0,0.58*r.scale,0),colour,"wedge")
+end
+local function chestBadge(r,p,colour)
+ attach(r,p.torso,"ChestBadge",V(0.22,0.22,0.05)*r.scale,CF(0.45*r.scale,0.15*r.scale,-0.46*r.scale),colour)
+end
+local function slimBelt(r,p)
+ local s=r.scale
+ attach(r,p.lower,"UtilityBelt",V(1.44*p.width,0.18,0.88*p.width)*s,CF(0,0.38*s,0),C.dark)
+ attach(r,p.lower,"BeltBuckle",V(0.2,0.2,0.08)*s,CF(0,0.38*s,-0.44*s),C.ivory)
+end
+local OUTFITS={
+ LeadResearcher=function(r,p)
+  collar(r,p,1.56,p.profile.trim)
+  -- A small scientific identifier, not the generic badge everyone wore.
+  attach(r,p.torso,"FieldIdTag",V(0.3,0.14,0.05)*r.scale,CF(0.42*r.scale,0.26*r.scale,-0.46*r.scale),p.profile.trim)
+  slimBelt(r,p)
+ end,
+ Researcher=function(r,p) collar(r,p,1.5,p.profile.trim);chestBadge(r,p,p.profile.trim);slimBelt(r,p) end,
+ -- Cleanest front in the cinematic: no badge, no pouches. The scarf is the
+ -- only thing interrupting it, which is what makes it read as deliberate.
+ Analyst=function(r,p) collar(r,p,1.46,p.profile.trim);slimBelt(r,p) end,
+ Commander=function(r,p)
+  attach(r,p.torso,"StandingCollar",V(0.92,0.36,0.86)*r.scale,CF(0,0.62*r.scale,0.02*r.scale),p.profile.coat)
+  attach(r,p.torso,"CoatPlacket",V(0.16,1.2,0.1)*r.scale,CF(0,0.05*r.scale,-0.47*r.scale),p.profile.accent or p.profile.trim)
+ end,
+ Technician=function(r,p) collar(r,p,1.5,p.profile.trim);chestBadge(r,p,p.profile.trim);slimBelt(r,p) end,
+ FieldWorker=function(r,p) collar(r,p,1.5,C.dark) end,
+ Security=function(r,p) attach(r,p.torso,"ArmourCollar",V(1.0,0.3,0.94)*r.scale,CF(0,0.6*r.scale,0),C.dark) end,
+}
+local EYEWEAR={
+ -- Two lenses, thin and rectangular: Voss and the analysts.
+ Glasses=function(r,p)
+  local s=r.scale
+  for _,side in {-1,1} do
+   local glass=attach(r,r.head,"OpticalLens",V(0.28,0.13,0.05)*s,CF(side*0.17*s,0.05*s,-0.4*s),C.cyan)
+   glass.Material=Enum.Material.Glass;glass.Transparency=0.62;glass.CanQuery=false
+  end
+  attach(r,r.head,"GlassesBridge",V(0.1,0.03,0.04)*s,CF(0,0.05*s,-0.4*s),C.metal)
+ end,
+ -- ONE temple lens on ONE side. Lyra and Voss used to wear identical cyan
+ -- pairs, so the two scientists in the command room read as a matched set
+ -- from any distance; this is asymmetric, so it also helps her three-quarter
+ -- outline.
+ ARLens=function(r,p)
+  local s=r.scale
+  local lens=attach(r,r.head,"ARLens",V(0.2,0.1,0.04)*s,CF(-0.17*s,0.07*s,-0.405*s),C.cyan)
+  lens.Material=Enum.Material.Glass;lens.Transparency=0.5;lens.CanQuery=false
+  attach(r,r.head,"ARTemple",V(0.06,0.05,0.34)*s,CF(-0.39*s,0.08*s,-0.22*s),C.metal)
+ end,
+ Goggles=function(r,p)
+  local s=r.scale
+  attach(r,r.head,"GoggleStrap",V(0.9,0.16,0.88)*s,CF(0,0.07*s,0.01*s),C.dark)
+  local lens=attach(r,r.head,"GoggleLens",V(0.62,0.18,0.08)*s,CF(0,0.07*s,-0.41*s),C.cyan)
+  lens.Material=Enum.Material.Glass;lens.Transparency=0.45;lens.CanQuery=false
+ end,
+ -- Pushed up onto the forehead: the face stays readable and the character
+ -- still reads as someone who works outdoors.
+ GogglesUp=function(r,p)
+  local s=r.scale
+  attach(r,r.head,"GoggleStrap",V(0.88,0.14,0.86)*s,CF(0,0.3*s,0.01*s),C.dark)
+  attach(r,r.head,"GoggleLens",V(0.58,0.16,0.08)*s,CF(0,0.3*s,-0.4*s),C.metal)
+ end,
+}
 -- R15-standard segmentation and proportions, built directly as the visible
 -- body (no separate invisible "carrier" skeleton hidden under a second shell
 -- layer - the block IS the character). At scale 1: head ~15% of standing
 -- height, shoulder width ~2.25 head-widths, legs ~48% of standing height,
--- relaxed hands fall to roughly upper/mid-thigh - the ratios the visual brief
--- asked for. Segments meet directly at each joint pivot; nothing decorative
--- (no ball/wedge "joint cover") sits at a shoulder, elbow, hip, knee or
--- ankle - a player should read upper arm -> lower arm -> hand, not
--- block -> ball -> block -> ball. Clothing/equipment below is a handful of
--- flat accent pieces on top of body blocks that are already coloured as worn
--- clothing (coat on torso/arms, pants on legs, dark on hands/feet), not a
--- second sculpted surface replacing the body.
+-- relaxed hands fall to roughly upper/mid-thigh. Segments meet directly at
+-- each joint pivot; nothing decorative sits at a shoulder, elbow, hip, knee
+-- or ankle.
+--
+-- BODY STYLE IS WIDTH ONLY. Every joint offset, pivot and limb LENGTH below
+-- is identical for all four builds, because the animation system - sole drop,
+-- knee and elbow bend direction, hand-clear-of-torso, the upright validator -
+-- was stabilised against this exact geometry. A silhouette pass earns a few
+-- percent of torso and arm thickness plus some overlay geometry, and nothing
+-- else.
 function Cast.buildHuman(parent,spec): Human
+ local profile=spec.profile
  local r=rig(parent,spec.name,spec.cframe)
- r.scale=spec.scale or 1;r.kind=spec.kind or "Scientist";r.coat=spec.coat;r.human=true
+ r.scale=profile.scale;r.kind=spec.kind or "Scientist";r.coat=profile.coat;r.human=true
+ r.profile=profile
  r.animState={moving=false,phase="Idle",seed=spec.seed or 0,activity="Research",activityAt=0,activityIndex=1,reactionUntil=0}
  local s=r.scale
+ local body=Appearance.body(profile.bodyStyle)
+ local tw,aw=body.torsoWidth,body.armWidth
  local function j(host,name,motor,size,offset,pivot,color,kind)
   return joint(r,host,name,motor,size*s,CF(offset*s),CF(pivot*s),color,kind,Enum.Material.SmoothPlastic)
  end
  -- The 0.31-stud offset here (not zero) is load-bearing: it makes this R15
  -- rig's root-to-sole distance match the pre-rebuild rig's (verified by
  -- hand: 2.81 studs at scale 1), which is what every hardcoded Y position
- -- throughout Sequences.lua/Env.lua was authored against. Without it, this
- -- body's longer legs sink every character about a third of a stud into
- -- every floor in every shot - a real, previously-introduced bug, not a
- -- style choice.
- local lower=j(r.root,"LowerTorso","Root",V(1.4,0.8,0.85),V(0,0.31,0),V(0,0,0),spec.coat)
- local torso=j(lower,"UpperTorso","Waist",V(1.8,1.3,0.9),V(0,0.4,0),V(0,-0.65,0),spec.coat)
+ -- throughout Sequences.lua/Env.lua was authored against.
+ local lower=j(r.root,"LowerTorso","Root",V(1.4*tw,0.8,0.85),V(0,0.31,0),V(0,0,0),profile.coat)
+ local torso=j(lower,"UpperTorso","Waist",V(1.8*tw,1.3,0.9),V(0,0.4,0),V(0,-0.65,0),profile.coat)
  r.torso=torso
- local head=j(torso,"Head","Neck",V(0.8,0.85,0.8),V(0,0.65,0),V(0,-0.425,0),spec.skin)
+ local head=j(torso,"Head","Neck",V(0.8,0.85,0.8),V(0,0.65,0),V(0,-0.425,0),profile.skin)
  r.head=head
- local hair=spec.hair or Color3.fromRGB(42,35,30)
- attach(r,head,"Hair",V(0.84,0.3,0.84)*s,CF(0,0.32*s,0.04*s),hair)
- face(r,spec.skin,hair,r.kind)
- if spec.headwear=="Helmet" or spec.headwear=="Hood" then
-  attach(r,head,"HeadProtection",V(0.9,0.4,0.86)*s,CF(0,0.34*s,0.02*s),spec.trim)
+ face(r,profile.skin,profile.hairColor,Appearance.face(profile.faceStyle))
+ buildPieces(r,head,Appearance.hair(profile.hairStyle),profile.hairColor)
+ if profile.headwear then
+  buildPieces(r,head,Appearance.headwear(profile.headwear),profile.headwear=="Hood" and profile.coat or profile.trim)
  end
- if r.kind=="Lyra" or r.kind=="Voss" then
-  for _,side in {-1,1} do
-   local glass=attach(r,head,"OpticalLens",V(0.3,0.14,0.06)*s,CF(side*0.18*s,0.06*s,-0.39*s),C.cyan)
-   glass.Material=Enum.Material.Glass;glass.Transparency=0.65;glass.CanQuery=false
-  end
+ -- Hale's jaw shadow: one small dark block low on the head, well under the
+ -- albedo budget's "facial detail" size. Not a beard, not anatomy - the same
+ -- trick a stylized avatar uses to age a face by a decade.
+ if profile.faceStyle=="Mature" then
+  attach(r,head,"JawShadow",V(0.62,0.16,0.12)*s,CF(0,-0.3*s,-0.36*s),profile.skin:Lerp(C.dark,0.42))
  end
- -- A small, shared set of accent pieces (never profession-specific anatomy)
- -- carries the sci-fi/expedition identity: collar, chest badge, belt.
- attach(r,torso,"Collar",V(1.5,0.16,0.92)*s,CF(0,0.58*s,0),spec.trim,"wedge")
- attach(r,torso,"ChestBadge",V(0.22,0.22,0.05)*s,CF(0.45*s,0.15*s,-0.46*s),spec.trim)
- attach(r,lower,"UtilityBelt",V(1.44,0.18,0.88)*s,CF(0,0.38*s,0),C.dark)
- attach(r,lower,"BeltBuckle",V(0.2,0.2,0.08)*s,CF(0,0.38*s,-0.44*s),C.ivory)
- if r.kind=="Voss" then attach(r,torso,"ScarfTail",V(0.4,0.9,0.14)*s,CF(-0.25*s,0.1*s,-0.48*s),spec.trim or C.ivory,"wedge") end
+ local eyewear=profile.eyewear and EYEWEAR[profile.eyewear]
+ if eyewear then eyewear(r,{profile=profile}) end
  r.hands={}
  for _,side in {-1,1} do
   local prefix=side<0 and "Left" or "Right"
-  local arm=j(torso,prefix.."UpperArm",prefix.."Shoulder",V(0.55,1.05,0.55),V(side*0.85,0.5,0),V(0,0.525,0),spec.coat)
-  local fore=j(arm,prefix.."LowerArm",prefix.."Elbow",V(0.48,0.85,0.48),V(0,-0.525,0),V(0,0.425,0),spec.coat)
+  local arm=j(torso,prefix.."UpperArm",prefix.."Shoulder",V(0.55*aw,1.05,0.55*aw),V(side*0.85,0.5,0),V(0,0.525,0),profile.coat)
+  local fore=j(arm,prefix.."LowerArm",prefix.."Elbow",V(0.48*aw,0.85,0.48*aw),V(0,-0.525,0),V(0,0.425,0),profile.coat)
   local hand=j(fore,prefix.."Hand",prefix.."Wrist",V(0.45,0.42,0.25),V(0,-0.425,0),V(0,0.21,0),C.dark)
   r.hands[prefix]=hand
-  attach(r,fore,"GloveCuff",V(0.52,0.14,0.52)*s,CF(0,-0.34*s,0),spec.trim,"wedge")
-  local thigh=j(lower,prefix.."UpperLeg",prefix.."Hip",V(0.65,1.25,0.65),V(side*0.55,-0.4,0),V(0,0.625,0),spec.pants)
-  local shin=j(thigh,prefix.."LowerLeg",prefix.."Knee",V(0.55,1.15,0.55),V(0,-0.625,0),V(0,0.575,0),spec.pants)
+  local heavyGlove=profile.outfitStyle=="FieldWorker" or profile.outfitStyle=="Security"
+  attach(r,fore,"GloveCuff",V(heavyGlove and 0.6 or 0.52,heavyGlove and 0.2 or 0.14,heavyGlove and 0.6 or 0.52)*s,CF(0,-0.34*s,0),profile.trim,"wedge")
+  local thigh=j(lower,prefix.."UpperLeg",prefix.."Hip",V(0.65,1.25,0.65),V(side*0.55,-0.4,0),V(0,0.625,0),profile.pants)
+  local shin=j(thigh,prefix.."LowerLeg",prefix.."Knee",V(0.55,1.15,0.55),V(0,-0.625,0),V(0,0.575,0),profile.pants)
   local foot=j(shin,prefix.."Foot",prefix.."Ankle",V(0.6,0.35,0.95),V(0,-0.575,0),V(0,0.145,0.28),C.dark)
-  attach(r,foot,"BootCuff",V(0.62,0.14,0.6)*s,CF(0,0.16*s,0.05*s),spec.trim,"wedge")
+  attach(r,foot,"BootCuff",V(0.62,0.14,0.6)*s,CF(0,0.16*s,0.05*s),profile.trim,"wedge")
  end
- r.scanner=attach(r,r.hands.Left,"TranslationScanner",V(0.5,0.12,0.7)*s,CF(0,-0.06*s,-0.24*s)*A(-0.3,0,0),C.metal)
- attach(r,r.scanner,"ScannerScreen",V(0.38,0.02,0.5)*s,CF(0,0.07*s,0),C.cyan,nil,Enum.Material.Neon)
- attach(r,torso,"ExpeditionPack",V(1.1,1.2,0.5)*s,CF(0,0,0.6*s),C.metal)
- if r.kind=="Hale" or spec.weapon then
-  local host=spec.weapon and r.hands.Right or lower
-  r.weapon=attach(r,host,"ExpeditionRifle",V(0.18,0.26,1.2)*s,CF(0.2*s,-0.1*s,-0.5*s),C.metal)
-  attach(r,r.weapon,"Barrel",V(0.1,0.1,0.6)*s,CF(0,0,-0.75*s),C.dark)
-  attach(r,r.weapon,"Stock",V(0.22,0.36,0.4)*s,CF(0,-0.05*s,0.65*s),C.dark)
+ local p={torso=torso,lower=lower,profile=profile,width=tw}
+ local outfit=OUTFITS[profile.outfitStyle]
+ if outfit then outfit(r,p) end
+ for _,item in profile.equipment do
+  local build=EQUIPMENT[item]
+  if build then build(r,p) end
  end
  Cast.evaluate(r)
  -- Measured, never assumed: with the rest pose evaluated the feet are flat,
- -- so root-Y minus the sole's Y IS the number every placement needs. Deriving
- -- it here means changing a limb length or a character's scale can never
- -- silently start sinking that character into the floor.
+ -- so root-Y minus the sole's Y IS the number every placement needs.
  local soleFoot=r.model:FindFirstChild("LeftFoot")
  r.soleDropValue=if soleFoot then r.root.Position.Y-(soleFoot.Position.Y-soleFoot.Size.Y/2) else 2.81*s
- -- Stand them on the real floor immediately. Every caller passes an authored
- -- CFrame whose Y is a guess; this makes the guess irrelevant from the first
- -- frame rather than from whenever the first Cast.place happens to run.
  local origin=spec.cframe.Position
  Cast.place(r,origin,origin+spec.cframe.LookVector*4)
  return r
@@ -3392,23 +4297,31 @@ local N=Config.Cinematic.Names
      of them was 225, which cannot survive a warm key.
    * the brightest thing in any frame should be a light source - a screen, a
      lamp lens, a beacon - never a person.
+
+ CharacterAppearance.lua's palette is authored inside this budget, and
+ tools/castcheck enforces it on every rig that is actually built.
 ]]
-local FIELD_COAT=Color3.fromRGB(150,153,144)
 function Cast.buildLyra(parent,cf)
- return Cast.buildHuman(parent,{name=N.Lyra,kind="Lyra",cframe=cf,scale=1,skin=Color3.fromRGB(176,132,100),hair=Color3.fromRGB(38,27,22),coat=FIELD_COAT,trim=C.orange,pants=C.dark})
+ return Cast.buildHuman(parent,{name=N.Lyra,kind="Lyra",cframe=cf,profile=Appearance.lead("Lyra")})
 end
 function Cast.buildVoss(parent,cf)
- return Cast.buildHuman(parent,{name=N.Voss,kind="Voss",cframe=cf,scale=1.06,skin=Color3.fromRGB(194,166,141),coat=Color3.fromRGB(37,48,65),trim=Color3.fromRGB(184,184,173),pants=C.dark})
+ return Cast.buildHuman(parent,{name=N.Voss,kind="Voss",cframe=cf,profile=Appearance.lead("Voss")})
 end
 function Cast.buildHale(parent,cf)
- return Cast.buildHuman(parent,{name=N.Hale,kind="Hale",cframe=cf,scale=1.12,skin=Color3.fromRGB(192,151,120),hair=Color3.fromRGB(141,143,142),coat=C.dark,trim=Color3.fromRGB(132,66,62),pants=C.metal})
+ return Cast.buildHuman(parent,{name=N.Hale,kind="Hale",cframe=cf,profile=Appearance.lead("Hale")})
 end
-local skins={Color3.fromRGB(203,168,143),Color3.fromRGB(157,112,83),Color3.fromRGB(105,73,55),Color3.fromRGB(187,140,111)}
+-- Background identity is INDEXED, never randomised: scientist 3 has the same
+-- curls, the same build and the same kit on every replay, so the audience can
+-- learn a face instead of watching the room reshuffle itself. `rng` is still
+-- accepted (callers pass one) and deliberately unused for appearance.
 function Cast.buildScientist(parent,cf,rng,index)
- return Cast.buildHuman(parent,{name=`Scientist{index}`,seed=index,kind="Scientist",cframe=cf,scale=0.92+index%4*0.04,skin=skins[index%4+1],hair=Color3.fromRGB(40+index*8,35+index*8,30+index*8),coat=FIELD_COAT:Lerp(C.ice,index%3*0.18),trim=C.orange,pants=C.dark,headwear=index%2==0 and "Hood" or "Hair"})
+ return Cast.buildHuman(parent,{name=`Scientist{index}`,seed=index,kind="Scientist",cframe=cf,profile=Appearance.scientist(index)})
 end
 function Cast.buildSoldier(parent,cf,rng,index)
- return Cast.buildHuman(parent,{name=`Soldier{index}`,seed=index+12,kind="Soldier",cframe=cf,scale=0.96+index%3*0.07,skin=skins[(index+1)%4+1],coat=C.metal:Lerp(FIELD_COAT,index%3*0.12),trim=C.metal,pants=C.dark,headwear="Helmet",weapon=true})
+ return Cast.buildHuman(parent,{name=`Soldier{index}`,seed=index+12,kind="Soldier",cframe=cf,profile=Appearance.soldier(index)})
+end
+function Cast.buildWorker(parent,cf,index)
+ return Cast.buildHuman(parent,{name=`ExcavationWorker{index}`,seed=index+30,kind="Worker",cframe=cf,profile=Appearance.worker(index)})
 end
 -- Called once per cinematic build. Without it the raycast exclusion list
 -- would keep growing across replays with models that no longer exist.
@@ -3767,10 +4680,18 @@ function Cast.stepAnimate(r,now)
  local expr=r.expression
  local fear=expr=="Afraid" or expr=="Horrified" or expr=="Amazed"
  local angry=expr=="Angry" or expr=="Determined"
+ --[[
+  This used to write the tilt to an attribute nothing read, so every angry,
+  sad and frightened face in the cinematic rendered with level eyebrows. The
+  brow is welded decoration, and Cast.evaluate drives welded decoration from
+  `entry.offset` every frame - so rotating THAT is the whole fix. The rest
+  angle is the face preset's own, which is what separates Hale's heavy set
+  brow from Lyra's.
+ ]]
  for _,b in r.face.brows do
-  b.part:SetAttribute("ExpressionTilt",b.side*(angry and -0.22 or expr=="Sad" and 0.22 or fear and 0.08 or 0))
+  b.entry.offset=b.base*A(0,0,b.side*(b.rest+(angry and -0.22 or expr=="Sad" and 0.22 or fear and 0.08 or 0)))
  end
- r.face.mouth.Size=V(0.2,fear and 0.1 or phase=="Speak" and 0.03+math.abs(math.sin(now*9))*0.045 or 0.03,0.03)*r.scale
+ r.face.mouth.Size=V(r.face.mouthWidth,fear and 0.1 or phase=="Speak" and 0.03+math.abs(math.sin(now*9))*0.045 or 0.03,0.03)*r.scale
 end
 -- Mechanical guardian: 62 studs standing, 38 kneeling. Individual limbs,
 -- fingers, neck pistons, core rotor, armor flakes and conduit plates.
@@ -4688,8 +5609,7 @@ function Sequences.buildCast(env): CastState
   table.insert(c.soldiers,Cast.buildSoldier(env.folder,CF(Z.BaseCenter+V(-16+i*4,3,-13-i%2*5)),rng,i))
  end
  for i=1,5 do
-  local w=Cast.buildHuman(env.folder,{name=`ExcavationWorker{i}`,kind="Worker",seed=i+30,cframe=CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),scale=0.94+i%3*0.04,skin=Color3.fromRGB(114+i*19,84+i*14,66+i*12),coat=Env.Colors.metal,trim=Env.Colors.orange,pants=Env.Colors.dark,headwear="Helmet"})
-  table.insert(c.workers,w)
+  table.insert(c.workers,Cast.buildWorker(env.folder,CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),i))
  end
  c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,15,-8))*A(0,math.pi,0),10)
  c.sovereign=Cast.buildSovereign(env.folder,CF(Z.PrisonCenter+V(0,21,5)),5.5)
@@ -4999,7 +5919,7 @@ function Sequences.build(env,c,ui): {Shot}
  end})
  -- A high three-quarter crane follows BOTH vehicles. Its final two seconds
  -- hold the completed parking composition; the next cut is straight inside.
- add("02_ArcticArrival",14,convoyCenter,V(38,19,58),{light="Exterior",fov=54,to=V(48,26,70),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",foreground={env.vehicles[1].model,env.vehicles[2].model},enter=function()
+ add("02_ArcticArrival",14,convoyCenter,V(38,19,58),{light="Exterior",fov=54,to=V(48,26,70),pace="Slow",speaker=N.Radio,text="There is something beneath the ice.",cue="Music.ArcticMystery",foreground={env.vehicles[1].model,env.vehicles[2].model,env.gate},enter=function()
   ui.setTitleCard({"THE NORTH POLE","Fifteen years before the invasion"},"Location")
   ui.playCue("Machinery.VehicleTracks")
  end,update=function(_,elapsed,dt)

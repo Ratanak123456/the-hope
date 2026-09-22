@@ -40,9 +40,12 @@ for i=1,8 do
  add("Scientist"..i,Cast.buildScientist(root,CFrame.new(V(-6-i*2,FLOOR+2.8,6)),rng,i))
  add("Soldier"..i,Cast.buildSoldier(root,CFrame.new(V(6+i*2,FLOOR+3,6)),rng,i))
 end
+-- Workers go through Cast.buildWorker for the same reason everyone else goes
+-- through their own builder: appearance is an indexed PROFILE now, and a
+-- harness that hand-rolled a spec here would be checking a character that
+-- does not appear in the cinematic.
 for i=1,5 do
- add("Worker"..i,Cast.buildHuman(root,{name="Worker"..i,kind="Worker",seed=i+30,cframe=CFrame.new(V(-4+i*3,FLOOR+2.8,-8)),
-  scale=0.94+i%3*0.04,skin=Color3.fromRGB(150,110,80),coat=MOD.Env.Colors.metal,trim=MOD.Env.Colors.orange,pants=MOD.Env.Colors.dark,headwear="Helmet"}))
+ add("Worker"..i,Cast.buildWorker(root,CFrame.new(V(-4+i*3,FLOOR+2.8,-8)),i))
 end
 
 --------------------------------------------------------------------------------
@@ -159,6 +162,43 @@ for _,phaseName in {"Idle","Listen","Speak","Scan","TypingConsole","Radio","Reac
  end
 end
 print(string.format("   minimum knee bow %.4f, minimum elbow set-back %.4f (both must be >= 0)",kneeWorst,elbowWorst))
+
+--------------------------------------------------------------------------------
+-- DECORATION IS ORDERED PARENT-FIRST, and hosted on its own rig.
+--
+-- Cast.evaluate walks r.rigid in insertion order and writes each part as
+-- host.CFrame * offset. That is only correct if a part whose HOST is itself
+-- decoration comes after it in the list - otherwise the child is placed from
+-- the parent's previous-frame transform and trails it by a frame, which on a
+-- turning head is a screen door of hair lagging behind the skull.
+--
+-- Appearance profiles introduced several of these (a screen on a scanner, an
+-- antenna on a radio, a lens on a lamp, a latch on a case), so the ordering
+-- is now load-bearing rather than incidental.
+--------------------------------------------------------------------------------
+print("== decoration is ordered parent-first ==")
+local decorationTotal=0
+for _,entry in people do
+ local r=entry.r
+ local indexOf={}
+ for i,item in r.rigid do indexOf[item.part]=i end
+ decorationTotal+=#r.rigid
+ for i,item in r.rigid do
+  local hostIndex=indexOf[item.host]
+  check(entry.label.." decoration is placed after its host",hostIndex==nil or hostIndex<i,
+   string.format("%s (%d) is hosted on %s (%d)",rawget(item.part,"Name"),i,rawget(item.host,"Name"),hostIndex or -1))
+  -- And every accessory must hang off THIS rig, never another character's.
+  local owned,node=false,item.host
+  while node do
+   if node==r.model then owned=true break end
+   node=rawget(node,"Parent")
+  end
+  check(entry.label.." decoration is hosted on its own rig",owned,
+   string.format("%s is hosted outside the rig",rawget(item.part,"Name")))
+ end
+end
+print(string.format("   %d decoration parts across %d people (%.1f each)",
+ decorationTotal,#people,decorationTotal/#people))
 
 --------------------------------------------------------------------------------
 -- Hands must stay outside the torso volume for every working/acting pose.

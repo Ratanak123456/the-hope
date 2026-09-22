@@ -72,6 +72,8 @@ def corners_of(part, shrink=1.0):
 
 
 def shade_of(part, normal_world, background):
+    if part["c"] == [26, 30, 36]:
+        return (26, 30, 36)
     key = max(0.0, base.dot(normal_world, KEY))
     fill = max(0.0, base.dot(normal_world, FILL)) * 0.30
     f = AMBIENT + (1 - AMBIENT) * key + fill
@@ -143,7 +145,12 @@ SEE_THROUGH = 0.6
 
 
 def render(capture, path, label):
-    background = (72, 82, 96)
+    # A silhouette pass throws every colour away and draws the cast as flat
+    # shapes on a light ground. It answers the one question colour cannot:
+    # whether two characters are distinguishable by OUTLINE, which is what
+    # survives a wide shot, a dark room and a viewer who is not looking hard.
+    silhouette = "silhouette" in capture["tag"]
+    background = (222, 226, 232) if silhouette else (72, 82, 96)
     canvas = base.Canvas(W, H, background)
     cam = Camera(capture["eye"], capture["look"], capture["up"], capture["fov"], W / H)
     # Far to near: the z-buffer is authoritative, but drawing far first means a
@@ -158,6 +165,8 @@ def render(capture, path, label):
         # occlusion is worse than no tool, so these are skipped outright.
         if part.get("t", 0) >= SEE_THROUGH:
             continue
+        if silhouette:
+            part = dict(part, c=[26, 30, 36], t=0)
         kind = part.get("k", "Block")
         if kind == "Wedge":
             draw_wedge(canvas, cam, part, background)

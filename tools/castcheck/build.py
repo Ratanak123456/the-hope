@@ -62,6 +62,7 @@ sources=[
  ("Kit","src/client/NorthPole/Kit.lua"),
  ("VehicleMotion","src/client/NorthPole/VehicleMotion.lua"),
  ("Env","src/client/NorthPole/Env.lua"),
+ ("CharacterAppearance","src/client/NorthPole/CharacterAppearance.lua"),
  ("Cast","src/client/NorthPole/Cast.lua"),
  ("Lighting","src/client/NorthPole/Lighting.lua"),
  ("PerformanceDirector","src/client/NorthPole/PerformanceDirector.lua"),

@@ -13,10 +13,14 @@ castcheck = root / "tools/castcheck"
 
 SETS = {
     "opening": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
-                 "Env", "Cast", "Lighting", "PerformanceDirector", "Camera",
-                 "Sequences"], "dump.luau"),
+                 "Env", "CharacterAppearance", "Cast", "Lighting",
+                 "PerformanceDirector", "Camera", "Sequences"], "dump.luau"),
     "menu": (["Signal", "Config", "Palette", "AegisRig", "Responsive", "Settings",
               "MenuScene"], "menu.luau"),
+    # Every human in the opening, on a neutral stage. See lineup.luau.
+    "lineup": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
+                "Env", "CharacterAppearance", "Cast", "Lighting",
+                "PerformanceDirector", "Camera", "Sequences"], "lineup.luau"),
 }
 PATHS = {
     "Signal": "src/shared/Signal.lua", "Config": "src/shared/Config.lua",
@@ -28,6 +32,7 @@ PATHS = {
     "PerformanceDirector": "src/client/NorthPole/PerformanceDirector.lua",
     "Camera": "src/client/NorthPole/Camera.lua",
     "VehicleMotion": "src/client/NorthPole/VehicleMotion.lua",
+    "CharacterAppearance": "src/client/NorthPole/CharacterAppearance.lua",
     "Sequences": "src/client/NorthPole/Sequences.lua",
 }
 

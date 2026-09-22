@@ -89,8 +89,7 @@ function Sequences.buildCast(env): CastState
   table.insert(c.soldiers,Cast.buildSoldier(env.folder,CF(Z.BaseCenter+V(-16+i*4,3,-13-i%2*5)),rng,i))
  end
  for i=1,5 do
-  local w=Cast.buildHuman(env.folder,{name=`ExcavationWorker{i}`,kind="Worker",seed=i+30,cframe=CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),scale=0.94+i%3*0.04,skin=Color3.fromRGB(114+i*19,84+i*14,66+i*12),coat=Env.Colors.metal,trim=Env.Colors.orange,pants=Env.Colors.dark,headwear="Helmet"})
-  table.insert(c.workers,w)
+  table.insert(c.workers,Cast.buildWorker(env.folder,CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),i))
  end
  c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,15,-8))*A(0,math.pi,0),10)
  c.sovereign=Cast.buildSovereign(env.folder,CF(Z.PrisonCenter+V(0,21,5)),5.5)

@@ -33,7 +33,8 @@ mkdir -p "$OUT"
 case "$WHICH" in
   menu)    render_set menu ;;
   opening) render_set opening ;;
+  lineup)  render_set lineup ;;
   both)    render_set menu; render_set opening ;;
-  *) echo "usage: run.sh [menu|opening|both] [tag filter]" >&2; exit 2 ;;
+  *) echo "usage: run.sh [menu|opening|lineup|both] [tag filter]" >&2; exit 2 ;;
 esac
 echo "frames and framing reports in $OUT"

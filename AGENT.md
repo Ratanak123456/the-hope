@@ -1491,6 +1491,150 @@ Sovereign rigs; audio; lighting (the brief put exterior lighting out of scope,
 and the arrival is noticeably hazy/low-contrast in Studio - worth a look, but
 it is `Lighting.lua`'s call, not this pass's).
 
+## 2026-09-22 session: the human cast, redesigned as appearance profiles
+
+Scoped to the VISUAL DESIGN of every human in the opening and nothing else.
+The rig was explicitly out of bounds and stayed out: Motor6D hierarchy, joint
+directions, JOINT_LIMITS, grounding, `Cast.place`, `Cast.walk`,
+`Cast.stepAnimate`, the pose library, look-at, the upright validator, foot
+correction and PerformanceDirector ownership are untouched. Aegis Zero, the
+Sovereign, the Wardens, vehicles, environments, lighting, cameras, story
+timing and the Arctic arrival were not modified.
+
+**The problem.** `Cast.buildHuman` built one body and then told twenty-four
+people apart by recolouring four values. Everyone got the same flat
+rectangular hair cap, the same face, the same collar, the same chest badge,
+the same belt, the same `TranslationScanner` in the same hand and the same
+`ExpeditionPack` on the same back - the senior officer included. Character
+work had started accreting inside `buildHuman` as `if r.kind=="Lyra"`
+branches, and Lyra and Voss wore the identical pair of cyan lenses, so the two
+scientists in the command room read as a matched set at any distance.
+
+**New file: `src/client/NorthPole/CharacterAppearance.lua`** (`--!strict`),
+data only - no instances, no joints, no animation. Hair styles as piece lists,
+four face-metric presets, four body-width presets, headwear, eyewear, and one
+indexed PROFILE per character. `Cast.lua` consumes profiles; it no longer
+contains per-character appearance branches.
+
+**Determinism is the point of the indexing.** Background appearance comes from
+`index`, never from `rng` - scientist 3 has the same curls, build and kit on
+every replay, so the audience can learn a face instead of watching the room
+reshuffle itself. `buildScientist`/`buildSoldier` still ACCEPT an `rng` (their
+callers pass one) and deliberately ignore it for appearance.
+
+**Nine hair styles plus three headwear shells**, 2-6 blocks each, never more:
+LayeredBob, ShortWolf, SidePart, CrewCut, Undercut, MessyCrop, CurlyTop,
+TiedBack, Bald; Helmet, HardHat, Hood worn OVER hair. CurlyTop is five
+controlled rounded pieces, not fifty - the environment pass had just finished
+deleting a snowfield made of overlapping spheres and a head is not the place
+to reintroduce that. Every fringe bottoms out at y >= 0.21 in head-local
+space, because the brows sit at 0.17-0.21 and a fringe any lower crosses its
+own eyebrows.
+
+**Hair length is not assigned by gender presentation.** Short layered, cropped
+and undercut styles sit on female-presenting characters as ordinary choices,
+and the longest style in the group (TiedBack, worn up) is not reserved for
+them.
+
+**The three leads, as three outlines rather than three costumes:** Lyra -
+widest head (layered bob to the jaw, asymmetric fringe), average build, one
+small thing in one hand, nothing on her back, single temple AR lens. Voss -
+tightest head, tallest, narrowest, one strong vertical (the scarf) down a
+deliberately clean front, two thin rectangular lenses. Hale - smallest head
+volume (cropped, no volume), widest shoulders by a clear margin via a yoke and
+shoulder caps, a long horizontal (the SLUNG rifle) across his hip, a stylized
+jaw shadow, and NO scientist scanner or pack. They disagree on hair volume,
+shoulder width, head coverage and held silhouette, which is what survives
+being rendered as flat grey.
+
+**Equipment now comes from the role.** Four of the eight scientists carry
+nothing at all, because a technician at a console has their hands on the
+console. Workers get hard hats, hi-vis vests, tool belts, knee pads and one
+tool each; security shares a helmet/webbing faction language across three
+silhouettes (light scout, standard, heavy lead) with one of the eight
+deliberately helmet-off. Worker 1 keeps a `scanner` because
+`07c_SampleCollection` and `07d_CompassAnomaly` frame it by name and one of
+them recolours it every frame - checked before the universal scanner was
+removed, not after.
+
+**Body style is WIDTH ONLY** - a few percent on torso and arm thickness plus
+overlay geometry. Not one joint offset, pivot or limb LENGTH moved, because
+sole drop, knee/elbow bend direction and hand-clear-of-torso were all
+stabilised against the current numbers. castcheck confirms: deepest
+hand/torso overlap still 0.0000, minimum knee bow and elbow set-back still
+positive, sole drop still scales.
+
+**A dead feature found and fixed while parameterising the face.**
+`stepAnimate` has always computed a per-expression brow tilt and written it to
+`SetAttribute("ExpressionTilt", ...)` that NOTHING anywhere read - so every
+angry, sad and frightened face in the cinematic has been rendering with
+perfectly level eyebrows. The brow is welded decoration and `Cast.evaluate`
+drives welded decoration from `entry.offset`, so holding that entry and
+rotating it is the whole fix. The face preset's own rest angle rides on the
+same value, which is what separates Hale's heavy set brow from Lyra's.
+Separately, the mouth's animated `Size` was hardcoded to `0.2` wide and would
+have overwritten every per-character mouth width on the first animated frame.
+
+### Tooling
+
+- **`tools/scenecheck/run.sh lineup`** (new `lineup.luau`) builds every human
+  on a neutral stage and photographs the row from front, three-quarter, side
+  and **in silhouette**. `render.py` gained a real silhouette mode: any tag
+  containing "silhouette" is drawn as flat shapes on a light ground, colour
+  thrown away. That is the acceptance test the brief asked for, and it is the
+  one question castcheck cannot answer - it proves rigs are CORRECT and has
+  never had an opinion about whether twenty-four correct rigs are twenty-four
+  different-looking people.
+- **castcheck gained a parent-first decoration check.** `Cast.evaluate` walks
+  `r.rigid` in insertion order and places each part from `host.CFrame`, so a
+  part whose host is ITSELF decoration must come later in the list or it
+  trails by a frame - on a turning head that is hair lagging behind the skull.
+  Profiles introduced several of these (screen on scanner, antenna on radio,
+  lens on lamp, latch on case), so the ordering went from incidental to
+  load-bearing. It also checks no accessory is hosted on another character's
+  rig. 646 decoration parts across 24 people (26.9 each).
+- Two harness call sites were building humans with hand-rolled specs
+  (`tools/castcheck/run.luau`'s workers, `Sequences.buildCast`'s workers);
+  both now go through `Cast.buildWorker`, so the harness checks the character
+  that actually appears in the cinematic. The new module was added to both
+  offline bundles.
+
+**Verification:** `./tools/check.sh` clean; `./tools/castcheck/run.sh` 49,699
+checks / 0 failures (up from 48,406, the new checks); `./tools/phase0a/offline/run.sh`
+all pass; `rojo build` produces a place. Frames in
+`docs/visual-rebuild/2026-09-22-cast-appearance/`.
+
+### Studio
+
+The cast WAS watched in the running command room (Play mode, real lighting),
+and doing so immediately paid for itself: **Hale's rust yoke edge crossed his
+rust coat placket, and the two together read as a heraldic red cross on his
+chest.** That is invisible in a flat offline render and obvious the moment a
+warm key hits it. The yoke edge is now defined by VALUE - a darker shade of
+his own coat - rather than by hue, and the fix was re-confirmed in a second
+Play run. Frames before and after are in the docs folder.
+
+What was NOT done is a systematic front/three-quarter/side/silhouette photo
+set taken inside Studio. The edit-mode camera cannot be driven from a script -
+Studio's own controller overwrites `CurrentCamera.CFrame` every frame, so the
+lineup has to be placed relative to wherever the camera already is and then
+orbited by synthetic right-drags, which is slow and imprecise. The silhouette
+evidence is the offline renderer's; the lighting evidence is the cinematic's
+own camera. A lineup at eye level was captured and is in the docs folder.
+
+### Driving Studio here: a capture rule worth keeping
+
+`grim` captures an OUTPUT, not a window, so "Studio has focus" is NOT enough
+to make a screenshot safe: anything tiled beside it lands in the frame too.
+That happened once this session - Studio was tiled next to the browser the
+user was reading, and the frame caught it. It was deleted immediately.
+
+The capture helper now refuses unless Studio is focused AND is the only window
+on the active workspace, and it parks Studio alone on its own workspace before
+every attempt (it drifted back onto the user's workspace twice). It refuses
+rather than captures when that cannot be arranged, which is the right default:
+a missing frame costs a retry, a leaked one cannot be taken back.
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
