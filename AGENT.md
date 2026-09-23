@@ -1635,6 +1635,79 @@ every attempt (it drifted back onto the user's workspace twice). It refuses
 rather than captures when that cannot be arranged, which is the right default:
 a missing frame costs a retry, a leaked one cannot be taken back.
 
+## 2026-09-23 session: the discovery sequence rebuilt (bore -> facility -> key -> Aegis -> seal failure)
+
+Scope: everything after Hale's "Begin drilling." up to the Warden army's first
+light, rebuilt around one rule - **nobody, expedition or audience, knows there
+is anything below Aegis Zero until they disturb its seal.** Started from HEAD
+`2d47c5f`. The code for this pass was written in a session that ended around
+01:14 on 2026-09-23 without committing or logging; this session audited that
+work against the brief, added a check, and wrote this entry. Nothing below is
+committed yet.
+
+**New modules.** `Instrumentation.lua` (`--!strict`): the expedition's own
+diegetic screens - a `SurfaceGui` on a physical console built once, with
+typed `DrillTelemetry`/`DrillDisplay`, rows/graph/alert band updated only when
+a value changes; `boreConsole` and `fieldMonitor` are two layouts of the same
+instrument family (dark field, off-white labels, muted cyan data, amber
+alerts, red only for failure). `GlyphLanguage.lua` (`--!strict`): the ancient
+script - ten stroke-defined glyphs (Gate, Guardian, Bind, Key, Below, Warning,
+Life, Release, Power, Return), `render`/`band`/`ring` helpers that build them
+as thin physical strokes with progressive lighting, and two fixed phrases
+(`SealAuthority` on key, pedestal, gate socket and Aegis's chest band;
+`ChamberWarning` around the chamber). Colour law lives there too: bronze dead /
+amber lit for ancient, cyan for human, violet only for what is below.
+`Kit.surfaceGui` is the one small helper added to `Kit.lua`.
+
+**Set (`Env.lua`).** The `RotatingAuger` is gone; the bore is a hot-water
+plant of five masses (`BoreTower`, `BoreCollar`, `HoseReel`, `HeaterPumpSkid`,
+`BoreControlConsole`) with hose over the crown, steam and weathering driven by
+`setReelRotation`/`setBoreSteam`/`setBoreWeathering`. An excavation pit with
+cut walls, scaffold, shaft-head station and an `AccessHatch` in an exposed
+roof. The marble/ivory/gold `AncientEntry` temple is replaced by an abandoned
+facility (`EntryShaft`, corridor, dead workstations, `GateHall`) in dark metal,
+slate and composite with ivory reduced to small armour plates. The inner gate
+is a segmented bulkhead with drive drums and lock channels, unlocked in stages
+by `setGateUnlock` (key core -> first glyph -> channels -> segments -> drums ->
+leaves). `SealKey` in a recessed `KeyPedestal` with matching glyphs, charged by
+`setKeyCharge` and moved by `placeKey` into `gateSocket`. The chamber's violet
+disc is gone: the lower seal is a closed iris over a dark `ContainmentShaft`,
+and `Env.setLowerSealReveal` is the ONLY path that lights anything violet (rim
+arcs, prison practicals, the army's sensors, the floor glyphs' state change).
+
+**Sequence (`Sequences.lua`, 106 shots, 317s).** New order: 06i Begin
+drilling -> 07a-07g bore/telemetry/progress/pressure drop/void/non-ice/structure
+exposed -> 08a-08b hatch, descent -> 09a-09g lab, dead workstation, inner gate,
+key, insertion, lock responds, gate unlocks -> 10a-10d Aegis foot/chains/torso/
+full -> 11a-11k reactions, glyphs, partial translation ("Below what?" / "I
+don't know.") -> 12a-12s external power, core, chest glyphs match the door,
+containment strain, signal spike on the human monitor (DIRECTLY BELOW), "It
+was never the source", "We were opening a lock" -> 13a-13l seal cracks, chain
+breaks, violet below, first partial, eye, Sovereign, Warden lights, first
+breakout -> the existing 29a+ disaster/sacrifice/ending, unchanged. Removed:
+07a-07f auger shots and every early prison beat (14d, 14e, 16, 17a-c, 18,
+18b-d, 19, 19b). `Lighting.lua` gained `abandonedLab()`. `story.txt`,
+`OpeningAudioConfig.lua`, `docs/OpeningAudioAssets.md` and
+`docs/opening/VISUAL_DIRECTION.md` were updated to the new canon and cue names.
+
+**Harness.** castcheck now fails any shot before `13a_SealCracks` that leaves a
+lower-seal light above zero or a rim/emissive part below full transparency, and
+checks the reveal actually happens afterwards (mutation-tested: a half-visible
+rim fails from shot 1). Its framing waiver list also now fails on waivers for
+shots that no longer exist. `./tools/check.sh` clean; castcheck 49,885 checks,
+0 failures; six known framing waivers remain (06_ThreePulses, 29e, 31b, 31e,
+31f, 37 - all outside this pass).
+
+**NOT verified in Studio.** A Play run was started from shot 14 via
+`Config.Cinematic.Debug` but was stopped from the desktop by the user almost
+immediately (the user was at the machine); the debug flag was reverted. The
+brief's Studio acceptance pass - bore silhouette, console legibility, lab
+mood, key/gate readability, Aegis scale, no early violet, the reveal as a
+twist - is still owed, along with the screenshots it asks for. Offline frames
+are in `docs/visual-rebuild/scenecheck/` (07a-13i). Seen offline and worth a
+look in Studio: Aegis in `10d_AegisFullReveal` reads as standing rather than
+kneeling (the long-standing Guardian rig pose gap, not touched here).
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
@@ -1644,10 +1717,9 @@ a missing frame costs a retry, a leaked one cannot be taken back.
    onward has still only ever been reasoned about, and the six bugs that pass
    found (see its entry) were all invisible to `castcheck` and `scenecheck` -
    so assume the later scenes carry the same class of defect until somebody
-   watches them. Known specifics already reported and not fixed:
-   `07e_SkippingClock` has the behind-the-display camera bug, and the
-   excavation workers' `CarryCase`/`OperateDrill` poses trip the upright
-   validator. Also unwatched: the full Start Game -> bedroom spawn -> Daren flow.
+   watches them. The 2026-09-23 discovery-sequence rebuild (07a-13l) is the
+   first thing to watch - see its entry for the checklist. Also unwatched: the
+   full Start Game -> bedroom spawn -> Daren flow.
 
    As of the Arctic-arrival pass later the same day there is now a NAMED LIST
    to work from rather than a guess: `KNOWN_FRAMING_FLAGS` in

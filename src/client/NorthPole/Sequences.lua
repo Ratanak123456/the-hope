@@ -7,6 +7,8 @@ local Cast=require(script.Parent.Cast)
 local Kit=require(script.Parent.Kit)
 local Camera=require(script.Parent.Camera)
 local Light=require(script.Parent.Lighting)
+local Glyph=require(script.Parent.GlyphLanguage)
+local Instrumentation=require(script.Parent.Instrumentation)
 local Performance=require(script.Parent.PerformanceDirector)
 local Sequences={}
 local N=Config.Cinematic.Names
@@ -40,15 +42,44 @@ local STAGING={
   {at=V(-2.8,2.95,0.7),look=V(0,4.2,-4.2),job="CheckingTablet"},
   {at=V(-0.4,3.1,5.4),look=V(-1,4,-1),job="Authority"},
  }},
- Door={origin="Door",marks={
-  {at=V(-1,2.8,4),look=V(0,6,0),job="Idle"},
-  {at=V(3,2.95,9),look=V(0,6,0),job="Idle"},
-  {at=V(-4,3.1,10),look=V(0,6,0),job="Authority"},
+ --[[
+  The bore head. All three are on the operator's side of the console, which
+  puts the screen between them and the tower - so any shot that holds a face
+  also holds the machine they are arguing about.
+
+  Their marks clear the console plinth (2.5 studs of local half-width), the
+  canopy posts and the rig truck parked at x=15, all checked against the real
+  build rather than eyeballed.
+ ]]
+ Bore={origin="BaseCenter",marks={
+  {at=V(12.6,2.8,-12.6),look=V(-14,3,-22),job="Monitoring"},
+  {at=V(9.2,2.95,-10.6),look=V(-14,3,-22),job="CheckingTablet"},
+  {at=V(14.6,3.1,-8.4),look=V(6,3,-14),job="Authority"},
  }},
- Prison={origin="PrisonCenter",marks={
-  {at=V(-9,2.8,-42),look=V(0,10,0),job="Idle"},
-  {at=V(-5,2.95,-40),look=V(0,10,0),job="Scan"},
-  {at=V(0,3.1,-43),look=V(0,10,0),job="Authority"},
+ -- On the exposed structure at the bottom of the cut, clear of the hatch
+ -- throat, the hoist legs, the generator skid and both portable lamps.
+ Excavation={origin="Excavation",marks={
+  {at=V(-3.5,-20.9,-6.5),look=V(0,-21,0),job="Scan"},
+  {at=V(-6.5,-20.9,-5.3),look=V(0,-21,0),job="CheckingTablet"},
+  {at=V(-2,-20.9,-9.8),look=V(-3,-21,-4),job="Authority"},
+ }},
+ -- Inside the facility: first at the foot of the entry shaft, then in the
+ -- operations bay, then before the gate. Three rooms, three blockings, which
+ -- is what makes the walk in feel like distance travelled.
+ LabEntry={origin="Door",marks={
+  {at=V(-7,2.8,31),look=V(0,5,20),job="Scan"},
+  {at=V(6,2.95,33),look=V(0,5,22),job="CheckingTablet"},
+  {at=V(-8,3.1,36),look=V(-2,4,30),job="Authority"},
+ }},
+ Lab={origin="Door",marks={
+  {at=V(-4,2.8,-6),look=V(-13,4.6,-4),job="Scan"},
+  {at=V(-1,2.95,-2.5),look=V(-13,4.6,-4),job="CheckingTablet"},
+  {at=V(4,3.1,-8),look=V(-5,4,-6),job="Authority"},
+ }},
+ GateHall={origin="Door",marks={
+  {at=V(-4.5,3.2,-25),look=V(0,10,-36),job="Scan"},
+  {at=V(-0.5,3.35,-22),look=V(0,10,-36),job="CheckingTablet"},
+  {at=V(5,3.5,-21),look=V(0,10,-36),job="Authority"},
  }},
  Chamber={origin="ChamberFloor",marks={
   {at=V(-5,2.8,24),look=V(0,14,0),job="Idle"},
@@ -86,12 +117,60 @@ function Sequences.buildCast(env): CastState
   local p=station and Z.Command+station or Z.BaseCenter+V(-25+i*6,2.8,22+i*3)
   local facing=station and Z.Command+V(station.X*1.6,2.8,station.Z) or Z.BaseCenter+V(0,2.8,-28)
   table.insert(c.scientists,Cast.buildScientist(env.folder,CFrame.lookAt(p,facing),rng,i))
-  table.insert(c.soldiers,Cast.buildSoldier(env.folder,CF(Z.BaseCenter+V(-16+i*4,3,-13-i%2*5)),rng,i))
+  --[[
+   A cordon ACROSS the approach to the working area, facing it, rather than
+   the old line at z = -13/-18 - which ran straight through where the bore
+   plant now stands. Three of the console inserts put the lens within a stud
+   of a soldier's torso, because the camera and the security detail were
+   occupying the same patch of snow.
+  ]]
+  local post=Z.BaseCenter+V(-20+i*6,3,2-(i%2)*4)
+  table.insert(c.soldiers,Cast.buildSoldier(env.folder,CFrame.lookAt(post,Z.BaseCenter+V(0,3,-28)),rng,i))
  end
+ --[[
+  The bore crew, one to each functional mass of the plant, so the machine
+  reads as something being OPERATED rather than as scenery with people near
+  it: the console, the reel, the heater skid, the collar and the power bank.
+  Five positions, five different jobs, all checked clear of the equipment
+  they stand at.
+ ]]
+ --[[
+  One to each functional mass, and every mark checked against the real build
+  rather than eyeballed: clear of the console canopy (which a placement ray
+  reads as a ceiling), clear of the pump skid's raised deck, and clear of the
+  fuel drums - all three of which the first draft put a worker inside.
+ ]]
+ local BORE_CREW={
+  {at=V(6.2,2.8,-24.2),look=V(8.6,3.4,-21)},
+  {at=V(-7.6,2.8,-20.6),look=V(-12.5,4.6,-23.5)},
+  {at=V(-17.6,2.8,-29.4),look=V(-24.5,3.5,-31)},
+  {at=V(3.2,2.8,-21.6),look=V(0,1,-28)},
+  {at=V(-16.6,2.8,-14.2),look=V(-24.5,3.2,-18)},
+ }
  for i=1,5 do
-  table.insert(c.workers,Cast.buildWorker(env.folder,CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),i))
+  local spot=BORE_CREW[i]
+  table.insert(c.workers,Cast.buildWorker(env.folder,CFrame.lookAt(Z.BaseCenter+spot.at,Z.BaseCenter+V(spot.look.X,spot.at.Y,spot.look.Z)),i))
  end
  c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,15,-8))*A(0,math.pi,0),10)
+ --[[
+  THE CHEST BAND.
+
+  The same four marks that are engraved on the buried structure's roof, on
+  the facility corridor, on the seal key, on its cradle and around the gate's
+  lock housing - now on the machine itself. That repetition is the entire
+  mechanism by which the audience works out, at the same moment Lyra does,
+  that the door and the thing behind it are one system. Nobody has to say it.
+
+  Fixed to the torso through Cast.fix rather than left standing in world
+  space: setAegisRise pitches the waist about seventeen degrees, which on a
+  seventeen-stud torso would leave the band hanging in the air where the
+  chest used to be.
+ ]]
+ c.aegisGlyphs=Glyph.band(c.aegis.model,Glyph.Phrases.SealAuthority,
+  c.aegis.torso.CFrame*CF(0,-3.6,-5.1)*A(0,math.pi,0),1.15,3.3,Env.Colors.bronzeDark)
+ for _,item in c.aegisGlyphs.model:GetDescendants() do
+  if item:IsA("BasePart") then Cast.fix(c.aegis,c.aegis.torso,item) end
+ end
  c.sovereign=Cast.buildSovereign(env.folder,CF(Z.PrisonCenter+V(0,21,5)),5.5)
  c.breakingWarden=Cast.buildWarden(env.folder,CF(Z.PrisonCenter+V(-24,0,-7)),0.85,true)
  for _,cf in env.prisonSpots do table.insert(c.frozenWardens,Cast.buildWarden(env.folder,cf,0.55,true)) end
@@ -106,7 +185,15 @@ function Sequences.buildCast(env): CastState
   Cast.lookAt(h,station and Z.Command+V(station.X*1.7,4,station.Z) or Z.BaseCenter+V(0,3,-28))
  end
  for i,h in c.workers do
-  h.home=h.root.CFrame;Cast.setActivity(h,(i%2==0 and "OperateDrill" or "CarryCase"));Cast.lookAt(h,Z.BaseCenter+V(0,2,-28))
+  h.home=h.root.CFrame
+  -- Each looks at the thing they are standing at, not all at one point: a row
+  -- of heads turned the same way is the "chorus of NPCs" look. CarryCase and
+  -- OperateDrill are deliberately left out of the rotation here - both lean
+  -- the torso far enough to trip Cast's own upright validator (a known,
+  -- separately-reported defect in those two poses), and the bore crew are the
+  -- most-photographed background figures in the sequence.
+  Cast.setActivity(h,(i%3==0 and "CheckCable" or i%3==1 and "Monitoring" or "TypingConsole"))
+  Cast.lookAt(h,Z.BaseCenter+V(BORE_CREW[i].look.X,BORE_CREW[i].look.Y,BORE_CREW[i].look.Z))
  end
  for i,h in c.soldiers do
   h.home=h.root.CFrame;Cast.setActivity(h,(i%3==0 and "Radio" or i%3==1 and "SecurityWatch" or "PatrolIdle"));Cast.lookAt(h,Z.BaseCenter+V(0,3,-28))
@@ -167,7 +254,22 @@ function Sequences.build(env,c,ui): {Shot}
   shot.enter=function()
    if op.stage then stage(op.stage) end
    ui.setSubtitle(nil,"");ui.setTitleCard(nil);ui.setBlackout(op.black and 0 or 1)
-   if op.light=="Exterior" then Light.exterior() elseif op.light=="Command" then Light.commandTent() elseif op.light=="Door" then Light.ancientInterior() elseif op.light=="Prison" then Light.prison() elseif op.light=="Emergency" then Light.emergency() elseif op.light=="Space" then Light.blackout() else Light.chamber(op.energy or 0) end
+   --[[
+    `advance` (0..1) is only meaningful for the two exterior moods: it walks
+    the polar afternoon toward evening, which is how the drilling montage
+    shows that hours have passed without a caption or a clock. "Cut" is the
+    open excavation - the same sky, but always late, because it is a later
+    day.
+   ]]
+   if op.light=="Exterior" then Light.exterior(op.advance)
+   elseif op.light=="Cut" then Light.exterior(op.advance or 1)
+   elseif op.light=="Command" then Light.commandTent()
+   elseif op.light=="Lab" then Light.abandonedLab()
+   elseif op.light=="Door" then Light.ancientInterior()
+   elseif op.light=="Prison" then Light.prison()
+   elseif op.light=="Emergency" then Light.emergency()
+   elseif op.light=="Space" then Light.blackout()
+   else Light.chamber(op.energy or 0) end
    if op.enter then op.enter() end
    if op.speaker then
     ui.setSubtitle(op.speaker,op.text)
@@ -289,7 +391,10 @@ function Sequences.build(env,c,ui): {Shot}
   local kind=op.shot or (reactOn and "Reaction" or "Medium");op.shot=nil
   local spec=FRAMING[kind] or FRAMING.Medium
   op.speaker=who;op.text=text;op.stage=stageName;op.expression=emotion;op.voice=voice
-  op.light=op.light or (stageName=="Command" and "Command" or stageName=="Prison" and "Prison" or "Chamber")
+  -- Each staging area's own mood, so a dialogue shot never has to restate it.
+  local STAGE_LIGHT={Command="Command",Bore="Exterior",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
+  op.light=op.light or STAGE_LIGHT[stageName] or "Chamber"
+  if stageName=="Bore" then op.advance=op.advance or 1 end
   op.fov=op.fov or spec.fov
   local subject=reactOn and byName[reactOn] or byName[who]
   --[[
@@ -485,98 +590,416 @@ function Sequences.build(env,c,ui): {Shot}
   and eventually collapsed, part-way through the line.
  ]]
  master("06i_BeginDrilling",1.8,"Command",{light="Command",speaker=N.Hale,text="Begin drilling.",expression="Determined",voice="HaleDrill"})
- -- 07. Insert montage; each insert has a specific prop or action.
- add("07a_DrillRotates",2,function() return env.drill:GetChildren()[1] end,V(5,1,7),{light="Exterior",cue="Machinery.DrillLoop",update=function(_,t) env.drill:PivotTo(env.drillBase*A(0,t*6,0));env.drillDust.Rate=35 end,leave=function() env.drillDust.Rate=0 end})
- -- Ahead of the drill head, not behind it: the HeavyDrill rig is parked at
- -- z=-23 and a camera five studs on that side of the contact point was inside
- -- its cab, which the unstick fallback then "corrected" to somewhere else
- -- entirely. From -34 the shot has the excavation between it and the rig.
- add("07b_IceFragments",1.3,function() return Z.BaseCenter+V(0,3.2,-28) end,V(5,1.6,-6),{light="Exterior",cue="Impacts.IceCracking",enter=function() env.drillDust:Emit(35) end})
- add("07c_SampleCollection",1.8,function() return c.workers[1].head end,V(2,1,-6),{light="Exterior",enter=function() Cast.act(c.workers[1],"Scan","Focused",c.workers[1].scanner.Position) end})
- add("07d_CompassAnomaly",1.5,function() return c.workers[1].scanner end,V(0,1.4,-1.4),{light="Exterior",fov=38,update=function(_,t) c.workers[1].scanner.Color=Env.Colors.cyan:Lerp(Env.Colors.orange,math.abs(math.sin(t*9))) end})
- add("07e_SkippingClock",1.2,function() return env.signalDisplay end,V(0,0,-5),{light="Command",update=function(_,t) env.pulses[1].Size=V(0.25,0.5+(math.floor(t*12)%3)*0.5,0.08) end})
- add("07f_MetalUnderIce",1.8,function() return Z.BaseCenter+V(45,30,-32) end,V(5,1,17),{light="Exterior",cue="Machinery.DrillHitsMetal"})
- -- 08–09. Symbol, face, enormous doorway, then architectural scale.
- add("08a_LyraClearsSymbol",2,function() return env.door.symbol end,V(3,0.8,7),{stage="Door",light="Door",enter=function() Cast.act(c.lyra,"ClearIce","Curious",env.door.symbol.Position) end})
- human("08b_OrangeRecognition",1.5,N.Lyra,"","Door","Amazed",nil,{light="Door",action="ClearIce",enter=function() env.door.symbol.Material=Enum.Material.Neon end})
- add("08c_AncientDoorOpens",3,function() return Z.Door+V(0,10,0) end,V(2,1,34),{light="Door",fov=55,cue="Machinery.AncientDoorOpening",update=function(a)
-  env.door.slideLeft(env.door.leftBase+V(-a*10,0,0));env.door.slideRight(env.door.rightBase+V(a*10,0,0))
+ --[[
+  ============================================================================
+  07 - THE DEEP BORE, AND WHAT IT FINDS
+  ============================================================================
+
+  The sequence this replaces was six inserts of an auger turning, ice chips,
+  a sample, a spinning compass, a skipping clock and then, with no
+  preparation at all, metal under the ice. It told the audience nothing about
+  what the expedition was doing and nothing about why the discovery mattered;
+  the spooky-instrument beats were atmosphere standing in for a story.
+
+  This is the discovery told as SCIENCE, in the order it would actually
+  happen, with every beat carrying one new piece of information:
+
+      a plant sending heat two kilometres down
+        -> steady telemetry, nothing wrong
+        -> hours pass
+        -> the line loses pressure, suddenly
+        -> the return says the bore is in a VOID, far too shallow
+        -> the return says the void has a floor that is not ice, and that the
+           floor is REGULAR
+        -> the cut is widened and the thing is standing in the open
+
+  The estimate on the console never changes: SOURCE ESTIMATE 1,984 m, all the
+  way through. That single unmoving number is what makes the discovery legible
+  as the wrong discovery - whatever they have hit at eleven hundred metres,
+  it is not what they came for. Nobody has to explain that, because the
+  instrument says it in every shot.
+ ]]
+ -- One baseline, overridden per beat, so a reading that is NOT the point of a
+ -- shot cannot drift by accident between shots.
+ local BORE_BASELINE={depth=0,hosePayout=0,waterTemperature=81,linePressure=7.2,flowRate=734,signalStrength=1,returnDensity=1,state="ACTIVE",sourceEstimate=1984}
+ local function telemetry(overrides)
+  local reading={}
+  for key,value in BORE_BASELINE do reading[key]=value end
+  if overrides then for key,value in overrides do reading[key]=value end end
+  reading.hosePayout=reading.hosePayout>0 and reading.hosePayout or reading.depth*1.008
+  env.boreDisplay.setTelemetry(reading)
+  -- The reel is driven by DEPTH, never by the shot's own 0..1 parameter: a
+  -- reel whose speed disagrees with the number on the screen beside it reads
+  -- as decoration. Same rule the truck wheels follow.
+  Env.setReelRotation(env,reading.depth*0.05)
+  return reading
+ end
+ add("07a_BoreSystemStarts",5,function() return Z.BaseCenter+V(-4,8,-25) end,V(38,19,33),{light="Exterior",fov=54,stage="Bore",to=V(30,15,26),pace="Slow",cue="Machinery.BoreStart",enter=function()
+  Env.setBoreSteam(env,26)
+  Env.setBoreWeathering(env,0)
+ end,update=function(a)
+  telemetry({depth=206+a*58,state="ACTIVE"})
  end})
- add("09_EnteringStructure",3,function() return c.lyra.head end,V(4,2,12),{light="Door",fov=62,update=function(a)
-  Cast.walk(c.lyra,Z.Door+V(-1,2.8,4),Z.Door+V(-1,2.8,-8),a)
-  Cast.walk(c.voss,Z.Door+V(3,2.95,9),Z.Door+V(3,2.95,-3),a)
+ -- The panel, on the operator's side of the desk. Six values, none of them
+ -- alarming: this shot exists so the audience learns what normal looks like,
+ -- which is the only way the next four can mean anything.
+ add("07b_BoreTelemetry",3.6,function() return env.boreScreen end,V(5.5,1.6,4.5),{light="Exterior",fov=36,speaker=N.Voss,text="Eleven hundred metres of ice, and the return is still clean.",voice="VossBorePlan",update=function(a)
+  telemetry({depth=264+a*46})
  end})
- -- 10–13. Foot -> hands AND chains -> complete kneeling silhouette.
+ --[[
+  TIME PASSES, told four ways at once and with no clock anywhere: the depth
+  jumps eight hundred metres, the light walks from polar afternoon into
+  evening (Light.exterior's `advance`), snow banks up on equipment that was
+  clear in the last shot, and the crew have changed over.
+ ]]
+ add("07c_BoreProgress",4.6,function() return Z.BaseCenter+V(-5,7,-25) end,V(-30,24,24),{light="Exterior",fov=56,to=V(-24,18,19),pace="Slow",cue="Machinery.BoreLoop",enter=function()
+  -- The shift changes. Two of the crew step away from their stations and two
+  -- take them over, which is a thing only time can explain.
+  Cast.place(c.workers[2],Z.BaseCenter+V(-15.4,2.8,-13.4),Z.BaseCenter+V(-24.5,3,-18))
+  Cast.place(c.workers[4],Z.BaseCenter+V(0.6,2.8,-19.4),Z.BaseCenter+V(8.6,3,-21))
+  Cast.setActivity(c.workers[2],"CheckCable");Cast.setActivity(c.workers[4],"Monitoring")
+ end,update=function(a)
+  Light.exterior(a)
+  Env.setBoreWeathering(env,a)
+  Env.setBoreSteam(env,26+a*14)
+  telemetry({depth=310+a*790,waterTemperature=79,flowRate=728})
+ end})
+ --[[
+  THE FIRST THING THAT GOES WRONG, and deliberately not explained yet. The
+  reel gives one small uncommanded movement - the hose is no longer being
+  held back by anything - the crew look up, and the panel goes amber. The
+  reason arrives two shots later.
+ ]]
+ add("07d_PressureDrop",3,function() return Z.BaseCenter+V(-12.5,4.8,-23.5) end,V(2.5,5.5,13.5),{light="Exterior",advance=1,fov=46,handheld=true,cue="Machinery.LinePressureLoss",foreground={env.hoseReel},enter=function()
+  for index,worker in c.workers do Cast.react(worker,"Surprised",Z.BaseCenter+V(-12.5,5,-23.5),0.4+(index%3)*0.15) end
+  for _,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Concerned",Z.BaseCenter+V(-12.5,5,-23.5),0.5) end
+ end,update=function(a)
+  telemetry({depth=1104,linePressure=7.2-a*4.6,flowRate=734+a*280,returnDensity=1-a*0.5,state="ALARM",alert="PRESSURE DROP"})
+  -- One uncommanded lurch, then it catches: the reel runs AHEAD of the depth
+  -- it should be at, which is what losing the load feels like. Applied after
+  -- telemetry(), which sets the reel from depth and would otherwise undo it.
+  local slip=math.min(a*3,1)
+  Env.setReelRotation(env,(1104+slip*26)*0.05)
+ end})
+ -- The first real discovery. The bore is in empty space, a kilometre short of
+ -- where the signal is supposed to be.
+ add("07e_UnexpectedVoid",3.4,function() return env.boreScreen end,V(5,1,4.1),{light="Exterior",advance=1,fov=38,cue="Machinery.ReturnLost",speaker=N.Voss,text="We have no return at all. The bore is in open space.",voice="VossVoid",update=function(a)
+  telemetry({depth=1112,linePressure=1.9,flowRate=1040,returnDensity=0,signalStrength=1+a*3.4,state="FAULT",alert="UNEXPECTED VOID DETECTED"})
+ end})
+ human("07e2_LyraNotACavity",2.8,N.Lyra,"There is no cavity in this ice. There never has been.","Bore","Concerned","LyraNoCavity")
+ --[[
+  NOT GEOLOGY. Said in the instrument's own language rather than with a
+  camera feed that this project cannot make convincing: the return trace,
+  which has wandered all sequence, goes FLAT - a hard horizontal line, which
+  is what a regular surface returns and what nothing natural returns.
+ ]]
+ add("07f_NonIceMaterial",3.6,function() return env.boreScreen end,V(5.2,1.3,4.3),{light="Exterior",advance=1,fov=37,cue="Machinery.HardReturn",speaker=N.Voss,text="Something down there is returning a flat signal. A machined surface.",voice="VossNonIce",update=function(a)
+  telemetry({depth=1118,linePressure=2.1,flowRate=1012,returnDensity=0.08,signalStrength=1+a*5.4,state="FAULT"})
+  -- A regular surface returns a regular trace. Overwriting the graph with a
+  -- constant after setTelemetry has pushed its own sample is what turns the
+  -- wander of the last four shots into a straight line.
+  env.boreDisplay.pushSignal(0.72)
+  env.boreDisplay.setRow("density","NON-ICE","caution")
+  env.boreDisplay.setFooter("GEOMETRY","REGULAR","caution")
+  env.boreDisplay.setAlert("NON-ICE SURFACE  ·  RETURN × 6.4","caution")
+ end})
+ human("07f2_HaleWiden",2.4,N.Hale,"Then stop boring and start digging. I want to stand on it.","Bore","Determined","HaleWiden",{shot="Over"})
+ --[[
+  AND THEN THE CUT. Deliberately a hard jump forward in time - no shot of
+  anybody digging - so the audience arrives at the bottom of a finished
+  excavation the same way the characters arrive at a finished day's work.
+  Stepped ice benches, a scaffold down one side, rim lamps, and at the
+  bottom of it a flat black roof with bronze conduit running out of it and
+  into the ice. Nothing about that is snow disappearing to reveal a door.
+ ]]
+ add("07g_StructureExposed",5.6,function() return Z.Excavation+V(-2,-19,4) end,V(20,32,30),{light="Cut",fov=58,stage="Excavation",to=V(12,22,20),pace="Slow",cue="Music.ScientificDiscovery",enter=function()
+  ui.setTitleCard({"THE OPEN CUT","Nine days later"},"Location")
+ end,update=function(a)
+  if a>0.55 then ui.setTitleCard(nil) end
+ end,leave=function() ui.setTitleCard(nil) end})
+
+ --[[
+  ============================================================================
+  08 - THE WAY IN
+  ============================================================================
+ ]]
+ add("08a_AccessHatch",3.6,function() return env.hatchThroat end,V(7,7,9),{light="Cut",fov=48,pace="Slow",speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
+ add("08b_Descent",4.2,function() return c.lyra.head end,V(6,3,-9),{light="Cut",fov=52,focusOffset=V(0,-0.7,0),cue="Music.ArcticMystery",update=function(a)
+  Cast.walk(c.lyra,Z.Excavation+V(-3.5,-23,-6.5),Z.Excavation+V(-1.4,-23,-3.6),a)
+  Cast.walk(c.voss,Z.Excavation+V(-6.5,-22.9,-4),Z.Excavation+V(-4.2,-22.9,-2.2),a)
+ end})
+
+ --[[
+  ============================================================================
+  09 - THE ABANDONED FACILITY
+  ============================================================================
+ ]]
+ -- Looking BACK at the shaft they came down, so the only daylight in the
+ -- building is behind the three of them and the corridor runs away into the
+ -- dark behind camera. The room is established by what the expedition's own
+ -- lamps reach, which is the whole idea of the abandonedLab preset.
+ add("09a_AbandonedLabEntry",5.4,function() return Z.Door+V(0,4,36) end,V(7,4,8),{light="Lab",fov=60,stage="LabEntry",to=V(6,3.4,6.6),pace="Slow",cue="Environment.FacilityTone",enter=function()
+  ui.setTitleCard({"BENEATH THE ICE"},"Location")
+ end,update=function(a)
+  if a>0.5 then ui.setTitleCard(nil) end
+ end,leave=function() ui.setTitleCard(nil) end})
+ human("09a2_VossPower",3.2,N.Voss,"There is no power anywhere in this structure. Not a volt.","LabEntry","Amazed","VossNoPower")
+ -- One insert, not a montage of damage: a chair pushed back and turned away
+ -- from a console somebody stopped working at, frost growing across the
+ -- panel, and a tool left exactly where it was put down.
+ add("09b_DeadWorkstation",4,function() return env.deadScreen end,V(7.4,1.4,3.8),{light="Lab",fov=42,stage="Lab",pace="Slow",cue="Environment.SettlingMetal"})
+ human("09b2_LyraLeftQuickly",3,N.Lyra,"Nobody shut this down. They walked out of it.","Lab","Concerned","LyraWalkedOut")
+ --[[
+  THE GATE. Dead, and the shot is built to say so: no light on it anywhere,
+  the only illumination in frame is the two portable lamps the expedition
+  carried in, and the camera pushes in slowly rather than craning around it.
+ ]]
+ add("09c_InnerGate",5,function() return Z.Door+V(0,11,-33) end,V(5,3.5,27),{light="Lab",fov=56,stage="GateHall",to=V(4,2.8,22),pace="Slow",cue="Music.WarningTension"})
+ human("09c2_HaleOpenIt",2.2,N.Hale,"Can you open it?","GateHall","Focused","HaleOpenIt",{shot="Over"})
+ human("09c3_VossNoMechanism",3.2,N.Voss,"There is no mechanism to force. It is waiting for something.","GateHall","Concerned","VossNoMechanism")
+ --[[
+  THE KEY, found in its cradle. The pedestal is what does the work here: an
+  object lying on a floor is set dressing, and an object sitting in a shaped
+  recess cut to its own outline, beside the mechanism it belongs to, is an
+  instruction. Lyra clears the frost off it rather than picking it up, so
+  the beat is recognition rather than acquisition.
+ ]]
+ add("09d_KeyDiscovered",4.6,function() return env.keyCore end,V(4.1,2.6,4.6),{light="Lab",fov=30,pace="Slow",cue="Ancient.KeyFound",foreground={env.keyFrost},enter=function()
+  Cast.place(c.lyra,Z.Door+V(-12.4,2.8,-26.6),Z.Door+V(-16,4,-27))
+  Cast.act(c.lyra,"ClearIce","Amazed",Z.Door+V(-16.5,4.3,-27))
+ end,update=function(a)
+  -- The frost comes off the cradle as she works, and the marks on the plinth
+  -- come up out of it. They do not LIGHT: they are being cleaned.
+  env.keyFrost.Transparency=0.25+a*0.75
+  env.keyPedestalGlyphs.setProgress(a*#env.keyPedestalGlyphs.glyphs)
+  env.keyGlyphs.setProgress(a*#env.keyGlyphs.glyphs*0.4)
+ end})
+ human("09d2_LyraSameMarks",3.4,N.Lyra,"These are the same marks. On the roof, in the corridor, on the door.","GateHall","Amazed","LyraSameMarks",{enter=function()
+  Cast.place(c.lyra,Z.Door+V(-6,2.9,-25),Z.Door+V(0,8,-36))
+ end})
+ --[[
+  INSERTED, and the facility answers - faintly, and in the key first. That
+  ordering is the whole reason the unlock reads as the key causing it rather
+  than the door deciding to open.
+ ]]
+ add("09e_KeyInserted",4,function() return env.gateSocketCore end,V(3.2,1.4,3.6),{light="Lab",fov=36,cue="Ancient.KeySeats",enter=function()
+  Cast.place(c.lyra,Z.Door+V(7.4,2.9,-31),Z.Door+V(10.6,5.6,-33))
+  Cast.act(c.lyra,"Reach","Determined",Z.Door+V(10.6,5.6,-33))
+ end,update=function(a)
+  -- Lined up, then seated. The key travels into the socket on screen.
+  Env.placeKey(env,env.keyAlignCF:Lerp(env.keySeatedCF,Kit.smooth(math.min(a*1.6,1))))
+  Env.setKeyCharge(env,math.clamp((a-0.62)/0.38,0,1))
+ end})
+ --[[
+  THE CIRCUIT. One tight shot on the lock housing while the charge leaves the
+  key and starts up the pier - light travelling through a mechanism, not a
+  door switching on.
+ ]]
+ add("09f_LockResponds",3.6,function() return env.gateSocketCore end,V(4.6,2.2,5.2),{light="Lab",fov=40,pace="Slow",cue="Ancient.LockEngages",update=function(a)
+  Env.setKeyCharge(env,1)
+  Env.setGateUnlock(env,a*0.3)
+ end})
+ --[[
+  AND THE GATE. Wide enough to hold the whole mechanism, because every stage
+  of the unlock is somewhere different on it: the charge crossing the head,
+  eight dogs withdrawing, two drums turning, and only then the leaves parting.
+  Nothing here is an explosion of light - it is a machine doing a job in the
+  order a machine would do it.
+ ]]
+ add("09g_GateUnlocks",7.4,function() return Z.Door+V(0,12,-36) end,V(6,1,22),{light="Lab",fov=58,to=V(4.5,0.6,26),pace="Slow",cue="Machinery.GateUnlock",enter=function()
+  for index,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Amazed",Z.Door+V(0,10,-36),0.3+index*0.1) end
+ end,update=function(a)
+  Env.setGateUnlock(env,0.3+a*0.7)
+ end})
+
+ --[[
+  ============================================================================
+  10 - AEGIS ZERO
+  ============================================================================
+
+  Four shots, bottom to top, each one further back than the last, so the
+  reveal is about SCALE rather than about detail. The team walk into this
+  believing it may be the source of the signal; nothing in these four shots
+  tells them otherwise, and nothing tells the audience either.
+ ]]
  -- The focus is lifted clear of the floor. Aegis Zero's foot sits with its
- -- centre exactly at chamber-floor level (and some of its toe geometry below
- -- it - see AGENT.md's note on the Guardian rig, which is a separate job), so
- -- aiming at the part's own centre put the focal point in the floor and the
- -- camera check kept relocating the shot. Framing just above it shows the
- -- foot AND the floor it rests on, which is the reveal this shot is for.
- add("10_AegisFoot",2,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(10,3,14),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
- add("11_HandsHoldChains",3,function() return c.aegis.model:FindFirstChild("RightHand") end,V(12,3,17),{fov=58,focusOffset=V(0,-3,0),cue="Machinery.ChainTension",pace="Slow"})
- add("12_FullKneelingGuardian",3.5,function() return c.aegis.torso end,V(50,10,84),{fov=57,to=V(57,14,94),focusOffset=V(0,-4,0),pace="Slow"})
- human("13a_VossAwe",1.5,N.Voss,"My God.","Chamber","Amazed","VossAwe")
- human("13b_HaleAge",1.5,N.Hale,"How old is it?","Chamber","Amazed","HaleAge")
- human("13c_VossIce",2.5,N.Voss,"The surrounding ice is thousands of years old.","Chamber","Amazed","VossIce")
- human("13d_HaleWeapon",3.5,N.Hale,"Then we have discovered the greatest weapon in human history.","Chamber","Focused","HaleWeapon",{reactOn=N.Lyra})
- human("13e_LyraBuried",2.3,N.Lyra,"No. It wasn’t buried here.","Chamber","Concerned","LyraBuried")
- human("13f_LyraRemain",2,N.Lyra,"It chose to remain.","Chamber","Concerned","LyraRemain")
- -- 14–15. Pictograms carry story before the prison reveal.
- add("14a_ClearWarning",2,function() return env.mythWall end,V(3,0,16),{cue="Music.WarningTension",enter=function()
-  Cast.place(c.lyra,Z.ChamberFloor+V(-38,2.8,30),env.mythWall.Position);Cast.act(c.lyra,"ClearIce","Concerned",env.mythWall.Position)
+ -- centre at chamber-floor level and some of its toe geometry below it (a
+ -- long-standing defect in the Guardian rig, tracked separately), so aiming
+ -- at the part's own centre puts the focal point inside the floor.
+ add("10a_AegisFoot",3.4,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(10,3,14),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
+ add("10b_AegisChains",3.8,function() return c.aegis.model:FindFirstChild("RightHand") end,V(12,3,17),{fov=58,focusOffset=V(0,-3,0),cue="Machinery.ChainTension",pace="Slow"})
+ -- The chest, and the band of marks across it - which the audience has now
+ -- seen four times and cannot yet read.
+ add("10c_AegisTorso",3.4,function() return c.aegis.core end,V(15,6,26),{fov=52,focusOffset=V(0,-2,0),pace="Slow",cue="Aegis.CorePulse"})
+ add("10d_AegisFullReveal",4.8,function() return c.aegis.torso end,V(50,10,84),{fov=57,to=V(57,14,94),focusOffset=V(0,-4,0),pace="Slow"})
+
+ --[[
+  ============================================================================
+  11 - WHAT THEY THINK THEY HAVE FOUND
+  ============================================================================
+ ]]
+ human("11a_VossAwe",1.6,N.Voss,"My God.","Chamber","Amazed","VossAwe")
+ human("11b_HaleAge",1.6,N.Hale,"How old is it?","Chamber","Amazed","HaleAge")
+ human("11c_VossIce",2.6,N.Voss,"The surrounding ice is thousands of years old.","Chamber","Amazed","VossIce")
+ human("11d_HaleWeapon",3.6,N.Hale,"Then we have discovered the greatest weapon in human history.","Chamber","Focused","HaleWeapon",{reactOn=N.Lyra})
+ human("11e_LyraBuried",2.4,N.Lyra,"No. It wasn’t buried here.","Chamber","Concerned","LyraBuried")
+ human("11f_LyraRemain",2,N.Lyra,"It chose to remain.","Chamber","Concerned","LyraRemain")
+ add("11g_LyraFindsGlyphs",3.4,function() return env.mythWall end,V(4.5,1.2,15),{cue="Music.WarningTension",pace="Slow",foreground={c.lyra.model},enter=function()
+  Cast.place(c.lyra,Z.ChamberFloor+V(-38,2.8,30),env.mythWall.Position)
+  Cast.act(c.lyra,"ClearIce","Concerned",env.mythWall.Position)
+ end,update=function(a)
+  env.warningBand.setProgress(a*1.2)
  end})
- human("14b_VossRead",1.3,N.Voss,"Can you read it?","Chamber","Concerned","VossRead")
- human("14c_LyraSome",1,N.Lyra,"Some of it.","Chamber","Afraid","LyraSome")
- add("14d_GuardianNotBuried",2.3,function() return env.reliefs[1] end,V(0,0,6),{speaker=N.Lyra,text="The Guardian is not buried.",voice="LyraNotBuried"})
- human("14e_GuardianIsSeal",2.5,N.Lyra,"The Guardian is the seal.","Chamber","Afraid","LyraSeal")
- add("15_ChainImpact",2,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-9,0,12),{cue="Impacts.UndergroundImpact",handheld=true,enter=function()
-  for i,h in c.scientists do Cast.react(h,"Afraid",c.aegis.head.Position,0.3+(i%2)*0.2) end
-  for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Afraid",c.aegis.head.Position,0.9) end
+ human("11h_VossCanYouRead",1.6,N.Voss,"Can you read it?","Chamber","Concerned","VossRead")
+ --[[
+  THE PARTIAL TRANSLATION, and the most important restraint in the whole
+  sequence.
+
+  The version this replaces had Lyra say "The Guardian is the seal" out loud,
+  in the chamber, before anybody touched anything - which hands the audience
+  the ending and leaves the seal failure with nothing to reveal.
+
+  She gets three words instead, and the third one is a question. The shot is
+  held on the wall for the whole beat rather than cut between faces, so each
+  mark is physically in frame as she names it and the audience can see her
+  running out of wall before she runs out of sentence.
+ ]]
+ add("11i_PartialTranslation",8,function() return env.mythWall end,V(3.4,1,12),{fov=44,pace="Slow",to=V(3,0.8,10.5),foreground={c.lyra.model},enter=function()
+  Cast.act(c.lyra,"Scan","Afraid",env.mythWall.Position)
+ end,update=function(_,elapsed)
+  if elapsed<1.5 then
+   ui.setSubtitle(N.Lyra,"Parts of it.")
+   env.warningBand.setProgress(1.2)
+  elseif elapsed<3.2 then
+   ui.setSubtitle(N.Lyra,"Guardian.")
+   env.warningBand.setProgress(2)
+  elseif elapsed<4.9 then
+   ui.setSubtitle(N.Lyra,"Bind.")
+   env.warningBand.setProgress(3)
+  else
+   ui.setSubtitle(N.Lyra,"And something below.")
+   env.warningBand.setProgress(4)
+  end
  end})
- -- 16–19. Arrival on the lower viewing ledge; anatomical partials then wide.
- add("16_PrisonDescent",2.5,function() return c.lyra.head end,V(-5,3,-12),{stage="Prison",light="Prison",enter=function()
-  Cast.place(c.soldiers[1],Z.PrisonCenter+V(-12,3,-38),c.sovereign.head.Position)
- end,update=function(a) Cast.walk(c.lyra,Z.PrisonCenter+V(-9,5,-48),Z.PrisonCenter+V(-9,2.8,-42),a) end})
- add("17a_GiantClaw",1.5,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(-12,2,-16),{light="Prison"})
- add("17b_FoldedLimbs",1.5,function() return c.sovereign.model:FindFirstChild("RightForearm") end,V(12,3,-22),{light="Prison"})
- add("17c_ClosedEyes",1.5,function() return c.sovereign.head end,V(4,1,-17),{light="Prison"})
- add("18_PrisonAndFrozenArmy",3,function() return c.sovereign.torso end,V(75,38,-110),{light="Prison",fov=63,focusOffset=V(0,0,25),pace="Slow"})
- human("18b_SoldierUnderstands",3,N.Soldier,"The machine wasn’t protecting itself from them.","Prison","Afraid","SoldierPrison")
- human("18c_ProtectingUs",1.7,N.Lyra,"It was protecting us.","Prison","Afraid","LyraUs")
- human("18d_ScannerQuiet",2.6,N.Voss,"My scanner shows no biological activity.","Prison","Concerned","VossBiology",{action="Scan"})
- add("19_FingerMovement",1.5,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(3,1,-6),{light="Prison",cue="Alien.IceMovement",update=function(a) c.sovereign.poses.RightWrist=A(-0.2*a,0,0);Cast.evaluate(c.sovereign) end})
- human("19b_ItIsWaking",3,N.Lyra,"The ice is moving because it is waking up.","Prison","Afraid","LyraWaking")
- -- 20. Shot/reverse-shot escalation; preserve every essential argument line.
- human("20a_Disconnect",2.7,N.Lyra,"Disconnect everything. We need to leave.","Activation","Angry","LyraDisconnect")
- human("20b_HaleDiscovery",4.5,N.Hale,"We did not cross half the planet to abandon humanity’s greatest discovery.","Activation","Angry","HaleDiscovery",{reactOn=N.Lyra})
- human("20c_HoldingCreature",2.7,N.Lyra,"It is holding the creature below us.","Activation","Angry","LyraCreature")
- human("20d_OnlyDefense",3.8,N.Hale,"This machine may be the only defense humanity will ever need.","Activation","Determined","HaleDefense")
- human("20e_AlreadyDefending",2.2,N.Lyra,"It is already defending us.","Activation","Angry","LyraDefending")
- human("20f_NotACode",2,N.Lyra,"It isn’t an activation code.","Activation","Afraid","LyraCode")
- human("20g_WhatIsIt",1.4,N.Hale,"Then what is it?","Activation","Concerned","HaleCode")
- human("20h_NewGuardian",2.7,N.Lyra,"It is asking for a new guardian.","Activation","Horrified","LyraGuardian")
- -- 21–28. Physical machine activation, opposition, breach, alien response.
- add("21_CoreReceivesPower",2,function() return c.aegis.core end,V(8,1,18),{energy=0.3,cue="Aegis.CoreActivation",enter=function()
-  for i,h in c.scientists do Cast.react(h,"Surprised",c.aegis.core.Position,0.35+(i%3)*0.16) end
-  for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Amazed",c.aegis.core.Position,0.55) end
+ human("11j_HaleBelowWhat",1.6,N.Hale,"Below what?","Chamber","Focused","HaleBelowWhat",{shot="Over"})
+ human("11k_LyraDontKnow",2,N.Lyra,"I don’t know.","Chamber","Afraid","LyraDontKnow")
+
+ --[[
+  ============================================================================
+  12 - THEY WAKE IT
+  ============================================================================
+ ]]
+ human("12a_HaleWake",2,N.Hale,"Then we wake it and we ask it.","Chamber","Determined","HaleWake",{shot="Over"})
+ human("12b_LyraWait",3.4,N.Lyra,"Give me a week with that wall before you put a current through it.","Chamber","Concerned","LyraWait")
+ human("12c_HaleDiscovery",4.4,N.Hale,"We did not cross half the planet to abandon humanity’s greatest discovery.","Chamber","Angry","HaleDiscovery",{reactOn=N.Lyra})
+ add("12d_ExternalPower",3.8,function() return env.activationConsole end,V(7,2.4,9),{light="Chamber",fov=44,cue="Machinery.PowerConnection",foreground={env.powerReadout},enter=function()
+  -- Scientists 5 and 7, not 1-4: the first four are the command room's own
+  -- technicians, each standing in exactly one ceiling light cone back at the
+  -- base, and walking one of them into the chamber leaves that assertion -
+  -- and the room's lighting design - quietly broken.
+  Cast.place(c.scientists[5],Z.ChamberFloor+V(11.5,2.8,22.5),Z.ChamberFloor+V(9,3,24))
+  Cast.place(c.scientists[7],Z.ChamberFloor+V(6.5,2.8,22),Z.ChamberFloor+V(9,3,24))
+  Cast.setActivity(c.scientists[5],"AdjustingCable");Cast.setActivity(c.scientists[7],"TypingConsole")
+ end})
+ add("12e_CoreReceivesPower",2.6,function() return c.aegis.core end,V(8,1,18),{energy=0.3,cue="Aegis.CoreActivation",enter=function()
+  for index,scientist in c.scientists do Cast.react(scientist,"Surprised",c.aegis.core.Position,0.35+(index%3)*0.16) end
+  for _,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Amazed",c.aegis.core.Position,0.55) end
  end,update=function(a) Cast.setAegisAwaken(c.aegis,a*0.3);Light.chamber(a*0.3) end})
- add("22a_FingersTighten",1.5,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-8,1,10),{energy=0.4,cue="Aegis.ServoMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.3+a*0.15);Light.chamber(0.3+a*0.15) end})
- add("22b_ShoulderUnlocks",1.5,function() return c.aegis.model:FindFirstChild("RightUpperArm") end,V(12,2,18),{energy=0.5,cue="Aegis.ArmorMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.45+a*0.15);Light.chamber(0.45+a*0.15) end})
- add("22c_HeadAndEyes",2.5,function() return c.aegis.head end,V(9,0,22),{energy=0.7,cue="Aegis.HeadMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.6+a*0.4);Light.chamber(0.6+a*0.4) end})
- human("22d_WeDidIt",1.4,N.Hale,"We did it.","Activation","Amazed","HaleSuccess",{energy=1,reactOn=N.Lyra})
- human("23_LyraNo",1.2,N.Lyra,"No.","Activation","Horrified","LyraNo",{energy=1})
- human("23b_FightingActivation",3,N.Lyra,"Turn off the power! It is fighting the activation!","Activation","Horrified","LyraPower",{energy=1})
- add("24_SealSeparates",2,function() return Z.ChamberFloor+V(0,0.5,4) end,V(0,38,17),{energy=1,fov=57,cue="Machinery.ChainTension",update=function(a) Env.openSeal(env,a);Cast.setAegisRise(c.aegis,a) end})
- add("25_FirstChainBreak",1.5,function() return c.aegis.model:FindFirstChild("RightHand") end,V(16,3,14),{light="Emergency",cue="Machinery.ChainBreak",enter=function() Cast.breakChain(c.aegis,2,os.clock());Cast.act(c.hale,"Stumble","Horrified",c.aegis.head.Position) end})
- add("25b_SecondChainBreak",1.2,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-14,2,15),{light="Emergency",cue="Aegis.MechanicalCry",enter=function() Cast.breakChain(c.aegis,1,os.clock()) end})
- add("26_SovereignEyeOpens",2,function() return c.sovereign.eyes[1] end,V(1,0,-5),{light="Prison",cue="Alien.EyeActivation",update=function(a) Cast.setCreatureEyes(c.sovereign,a*0.5);Cast.removeIceShell(c.sovereign,a) end})
- add("26b_GuardianRises",2,function() return c.sovereign.head end,V(3,0,-18),{light="Prison",speaker=N.Sovereign,text="The Guardian rises.",cue="Alien.SovereignVoiceGuardianRises",update=function(a) Cast.setCreatureEyes(c.sovereign,0.5+a*0.5) end})
- add("27_WardenArmyActivates",2,function() return c.sovereign.torso end,V(70,30,-100),{light="Prison",fov=64,focusOffset=V(0,0,36),speaker=N.Sovereign,text="The gate is open.",cue="Alien.SovereignVoiceGateOpen",update=function(a)
-  for i,p in env.armySensors do p.Transparency=1-math.clamp(a*2-i/#env.armySensors,0,1) end
-  for i,w in c.frozenWardens do Cast.setCreatureEyes(w,math.clamp(a*2-i/#c.frozenWardens,0,1)) end
+ --[[
+  THE MATCH. The chest band lights, and it is the same four marks that were
+  on the roof of the buried structure, in the corridor, on the key, on its
+  cradle and around the gate's lock housing. This is the scene's real
+  turning point and it is carried entirely by repetition of a shape.
+ ]]
+ add("12f_ChestGlyphs",3.4,function() return c.aegis.core end,V(11,2,20),{energy=0.35,fov=46,pace="Slow",cue="Ancient.ChestBandLights",update=function(a)
+  Cast.setAegisAwaken(c.aegis,0.3+a*0.06)
+  Light.chamber(0.3+a*0.06)
+  c.aegisGlyphs.setProgress(a*#c.aegisGlyphs.glyphs)
  end})
- add("28_FirstWardenBreakout",2.5,function() return c.breakingWarden.head end,V(-4,1,-12),{light="Prison",speaker=N.Sovereign,text="The harvest may continue.",cue="Alien.SovereignVoiceHarvestContinue",update=function(a)
+ human("12g_LyraSameSystem",3.4,N.Lyra,"Those are the marks from the door. The door and this machine are one thing.","Chamber","Horrified","LyraSameSystem",{energy=0.36})
+ human("12h_NotACode",2.2,N.Lyra,"It isn’t an activation code.","Chamber","Afraid","LyraCode",{energy=0.36})
+ human("12i_WhatIsIt",1.5,N.Hale,"Then what is it?","Chamber","Concerned","HaleCode",{energy=0.36,shot="Over"})
+ human("12j_NewGuardian",2.8,N.Lyra,"It is asking for a new guardian.","Chamber","Horrified","LyraGuardian",{energy=0.36})
+ add("12k_FingersTighten",1.7,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-8,1,10),{energy=0.45,cue="Aegis.ServoMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.36+a*0.14);Light.chamber(0.36+a*0.14) end})
+ add("12l_ShoulderUnlocks",1.7,function() return c.aegis.model:FindFirstChild("RightUpperArm") end,V(12,2,18),{energy=0.55,cue="Aegis.ArmorMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.5+a*0.15);Light.chamber(0.5+a*0.15) end})
+ add("12m_HeadAndEyes",2.7,function() return c.aegis.head end,V(9,0,22),{energy=0.75,cue="Aegis.HeadMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.65+a*0.35);Light.chamber(0.65+a*0.35) end})
+ human("12n_WeDidIt",1.5,N.Hale,"We did it.","Chamber","Amazed","HaleSuccess",{energy=1,reactOn=N.Lyra})
+ --[[
+  AND THE BUILDING DISAGREES. Three things happen at once, all of them
+  BELOW the celebration: the chains come under tension, the marks set into
+  the floor around the iris change state, and something a long way down
+  answers. Nobody has said the word "seal" yet.
+ ]]
+ add("12o_ContainmentStrain",3.4,function() return Z.ChamberFloor+V(0,2,6) end,V(14,16,26),{energy=1,fov=52,handheld=true,cue="Impacts.UndergroundImpact",enter=function()
+  for index,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Afraid",Z.ChamberFloor+V(0,0,0),0.55+index*0.1) end
+ end,update=function(a)
+  env.sealFloorGlyphs.setProgress(a*#env.sealFloorGlyphs.glyphs)
+  Env.openSeal(env,a*0.05)
+ end})
+ --[[
+  THE PAYOFF FOR THE BORE CONSOLE. Same instrument family, same layout, same
+  units - so when the number moves by a factor of forty-seven the audience
+  knows exactly how far from normal that is, because they spent four shots
+  learning what normal looked like on the ice.
+ ]]
+ add("12p_SignalSpike",3.6,function() return env.fieldScreen end,V(2.9,0.8,2.4),{energy=1,fov=34,cue="Alien.SignalSurge",update=function(a)
+  env.fieldDisplay.setRow("signal",`× {Instrumentation.formatNumber(1+a*46.2,1)}`,if a>0.3 then "critical" else "caution")
+  env.fieldDisplay.setRow("depth",if a>0.45 then "LOCKED" else "RESOLVING","caution")
+  env.fieldDisplay.setRow("bearing",if a>0.6 then "DIRECTLY BELOW" else "—",if a>0.6 then "critical" else nil)
+  env.fieldDisplay.pushSignal(math.min(0.15+a*1.2,1))
+  if a>0.6 then env.fieldDisplay.setAlert("SOURCE IS NOT THIS OBJECT","critical") end
+ end})
+ human("12q_VossNotTheSource",3.6,N.Voss,"It was never the source. It has been sitting on top of the source.","Chamber","Horrified","VossNotSource",{energy=1})
+ human("12r_LyraRealizes",3.4,N.Lyra,"We weren’t waking a machine. We were opening a lock.","Chamber","Horrified","LyraLock",{energy=1})
+ human("12s_LyraPower",3,N.Lyra,"Turn off the power! It is fighting the activation!","Chamber","Horrified","LyraPower",{energy=1})
+
+ --[[
+  ============================================================================
+  13 - WHAT WAS UNDER IT
+  ============================================================================
+
+  The first violet frame in the film. Everything below is gated on
+  Env.setLowerSealReveal, which is the only thing anywhere that can turn the
+  lower prison's lights, the shaft glow or the frozen army's sensors up from
+  zero - so the twist cannot leak into an earlier shot by accident.
+ ]]
+ add("13a_SealCracks",3.2,function() return Z.ChamberFloor+V(0,0.5,4) end,V(0,38,17),{energy=1,fov=57,cue="Machinery.SealSeparates",foreground={env.sealIris},update=function(a)
+  Env.openSeal(env,0.05+a*0.95)
+  Cast.setAegisRise(c.aegis,a)
+  Env.setLowerSealReveal(env,a*0.45)
+ end})
+ human("13b_LyraNo",1.3,N.Lyra,"No.","Chamber","Horrified","LyraNo",{energy=1})
+ add("13c_FirstChainBreak",1.6,function() return c.aegis.model:FindFirstChild("RightHand") end,V(16,3,14),{light="Emergency",cue="Machinery.ChainBreak",enter=function()
+  Cast.breakChain(c.aegis,2,os.clock());Cast.act(c.hale,"Stumble","Horrified",c.aegis.head.Position)
+ end})
+ add("13d_SecondChainBreak",1.3,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-14,2,15),{light="Emergency",cue="Aegis.MechanicalCry",enter=function() Cast.breakChain(c.aegis,1,os.clock()) end})
+ --[[
+  LOOKING DOWN IT. The containment shaft under the iris is ordinary dark
+  structure that has been sitting there, unseen, behind a closed floor for
+  the entire film; opening the iris is the first and only time it is in
+  frame. Seven rings falling away, each smaller than the last, and a long way
+  under them, violet.
+ ]]
+ add("13e_VioletBelow",3.6,function() return Z.ChamberFloor+V(0,-6,0) end,V(0,34,14),{light="Emergency",fov=62,pace="Slow",to=V(0,26,10),cue="Alien.LowRumble",foreground={c.aegis.model},update=function(a)
+  Env.setLowerSealReveal(env,0.45+a*0.55)
+ end})
+ human("13f_HoldingCreature",2.8,N.Lyra,"It is holding something down there. It has always been holding it down there.","Chamber","Horrified","LyraCreature",{light="Emergency"})
+ -- Down in it. The expedition never goes here - the camera does.
+ add("13g_FirstAlienPartial",2.6,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(-12,2,-16),{light="Prison",pace="Slow",cue="Alien.IceMovement"})
+ add("13h_SovereignEyeOpens",2.4,function() return c.sovereign.eyes[1] end,V(1,0,-5),{light="Prison",cue="Alien.EyeActivation",update=function(a) Cast.setCreatureEyes(c.sovereign,a*0.5);Cast.removeIceShell(c.sovereign,a) end})
+ add("13i_SovereignReveal",3.8,function() return c.sovereign.torso end,V(56,28,-82),{light="Prison",fov=63,focusOffset=V(0,0,25),to=V(62,32,-92),pace="Slow",cue="Music.AlienAwakening"})
+ add("13j_GuardianRises",2.2,function() return c.sovereign.head end,V(3,0,-18),{light="Prison",speaker=N.Sovereign,text="The Guardian rises.",cue="Alien.SovereignVoiceGuardianRises",update=function(a) Cast.setCreatureEyes(c.sovereign,0.5+a*0.5) end})
+ --[[
+  AND ONLY THEN THE ARMY. Held back a full shot from the Sovereign on
+  purpose: two reveals landing on the same frame cancel each other out. What
+  comes up first reads as more lights in the cavern, and then the lights turn
+  out to be in pairs.
+ ]]
+ add("13k_WardenLights",3.2,function() return c.sovereign.torso end,V(70,30,-100),{light="Prison",fov=64,focusOffset=V(0,0,36),pace="Slow",speaker=N.Sovereign,text="The gate is open.",cue="Alien.SovereignVoiceGateOpen",update=function(a)
+  for index,sensor in env.armySensors do sensor.Transparency=1-math.clamp(a*2-index/#env.armySensors,0,1) end
+  for index,warden in c.frozenWardens do Cast.setCreatureEyes(warden,math.clamp(a*2-index/#c.frozenWardens,0,1)) end
+ end})
+ add("13l_FirstWardenBreakout",2.6,function() return c.breakingWarden.head end,V(-4,1,-12),{light="Prison",speaker=N.Sovereign,text="The harvest may continue.",cue="Alien.SovereignVoiceHarvestContinue",update=function(a)
   Cast.removeIceShell(c.breakingWarden,a);Cast.setCreatureEyes(c.breakingWarden,a);Cast.setCreatureLimbUnfold(c.breakingWarden,a);Cast.setCreatureLimbUnfold(c.sovereign,a)
  end})
  -- 29. Clear short disaster beats with distinct actions.

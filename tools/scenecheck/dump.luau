@@ -30,11 +30,33 @@ local CAPTURES={
  {"06b_VossSignal",0.5},
  {"06c_HaleSpacecraft",0.5},
  {"06e_LyraCalling",0.5},
- {"07b_IceFragments",0.0},
- {"10_AegisFoot",0.0},
+ -- The bore, the discovery and the facility: one frame per beat this pass
+ -- exists to build, so a composition change anywhere in it shows up in the
+ -- offline render without having to drive Studio.
+ {"07a_BoreSystemStarts",0.0},
+ {"07a_BoreSystemStarts",1.0},
+ {"07b_BoreTelemetry",0.5},
+ {"07c_BoreProgress",1.0},
+ {"07d_PressureDrop",0.5},
+ {"07e_UnexpectedVoid",0.5},
+ {"07g_StructureExposed",0.0},
+ {"07g_StructureExposed",1.0},
+ {"08a_AccessHatch",0.5},
+ {"09a_AbandonedLabEntry",0.5},
+ {"09b_DeadWorkstation",0.5},
+ {"09c_InnerGate",1.0},
+ {"09d_KeyDiscovered",1.0},
+ {"09f_LockResponds",0.5},
+ {"09g_GateUnlocks",0.35},
+ {"09g_GateUnlocks",1.0},
+ {"10a_AegisFoot",0.0},
+ {"10d_AegisFullReveal",0.5},
+ {"11i_PartialTranslation",0.5},
+ {"12f_ChestGlyphs",1.0},
+ {"13a_SealCracks",1.0},
+ {"13e_VioletBelow",0.5},
+ {"13i_SovereignReveal",0.5},
  {"29d_EvacuationVehicles",0.0},
- {"16_PrisonDescent",0.9},
- {"18_PrisonAndFrozenArmy",0.5},
 }
 -- A part smaller than this fraction of its own distance cannot register at
 -- the output resolution; emitting it only makes the JSON bigger and the

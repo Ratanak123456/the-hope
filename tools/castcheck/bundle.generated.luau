@@ -252,6 +252,7 @@ R.Random={new=makeRandom}
 --------------------------------------------------------------------------------
 
 local Methods={}
+local NILABLE={Parent=true,PrimaryPart=true,Part0=true,Part1=true,Adornee=true,Attachment0=true,Attachment1=true,CameraSubject=true,Value=true,SoundGroup=true,PlayerToHideFrom=true,RootPart=true,NextSelectionUp=true,NextSelectionDown=true,NextSelectionLeft=true,NextSelectionRight=true}
 local InstanceMT={
  __index=function(t,k)
   -- Position is derived from CFrame exactly as the engine derives it, so a
@@ -281,6 +282,18 @@ local InstanceMT={
    rawset(t,"Parent",v)
    if v then table.insert(rawget(v,"_children"),t) end
    return
+  end
+  --[[
+   ROBLOX REJECTS NIL FOR A VALUE PROPERTY; SO MUST THE SHIM.
+
+   Only Instance-reference properties accept nil in the engine. Everything
+   else - Color, Size, Brightness, Text - throws "Color3 expected, got nil".
+   The shim used to store the nil silently, so a missing colour passed every
+   offline check and then killed Env.build on the first line of the real
+   opening, which fell straight through to gameplay.
+  ]]
+  if v==nil and not NILABLE[k] then
+   error(string.format("Unable to assign property %s of %s. value expected, got nil",tostring(k),tostring(rawget(t,"Name"))),2)
   end
   rawset(t,k,v)
  end,
@@ -510,7 +523,22 @@ end
 function workspaceInstance:Raycast(origin,direction,params)
  R.rayCount+=1
  local length=direction.Magnitude
- if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.9 then
+--[[
+  THE SPLIT, tightened from 0.9 to 0.999.
+
+  At 0.9 anything steeper than about 64 degrees below horizontal took the
+  fast column probe - which answers "is there a solid anywhere in the column
+  under this ray", not "does this ray hit anything". That is the right answer
+  for the thousands of GROUND queries and a fabrication for a camera ray, and
+  it reported a shot looking down into the containment shaft as blocked by
+  "Workspace" when nothing is in the way at all.
+
+  Every genuine ground probe casts EXACTLY straight down - Cast.floorUnder
+  and Env.surfaceY both pass V(0,-length,0), and Camera.inspect's terrain
+  test passes V(0,-2,0) - so their ratio is exactly 1.0 and they all still
+  take the fast path. Nothing else does.
+ ]]
+ if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.999 then
   return segmentHitsSolids(origin,direction,params)
  end
  if direction.Y>=0 then return nil end
@@ -694,7 +722,7 @@ typeof=function(value)
  end
  return rawTypeof(value)
 end
-RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,Env=true,CharacterAppearance=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
+RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,GlyphLanguage=true,Instrumentation=true,Env=true,CharacterAppearance=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
 MOD.Signal=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -1547,6 +1575,38 @@ function Kit.beam(parent: Instance, name: string, a: Vector3, b: Vector3, width:
  return p
 end
 
+--[[
+ A blank world-space screen on one face of `host`, for callers that need to
+ drive individual elements rather than print one fixed marking.
+
+ Kit.label below is the right tool for a stencilled sign or a painted panel
+ number - one string, set once, never touched again. It is the wrong tool for
+ the bore console, where six values change independently and an alert band has
+ to appear over the top of them; that needs real child elements, which is what
+ this returns a canvas for (see Instrumentation.lua).
+
+ Passing `pixelsPerStud` sizes the canvas from the part, which suits a screen
+ whose physical size might change. Leaving it out gives a FIXED canvas the
+ caller states itself, which is what a laid-out instrument panel wants: every
+ element then sits at a known pixel position regardless of how big the part is.
+]]
+function Kit.surfaceGui(host: BasePart, face: Enum.NormalId?, pixelsPerStud: number?, canvas: Vector2?): SurfaceGui
+ local gui = Instance.new("SurfaceGui")
+ gui.Name = "WorldDisplay"
+ gui.Face = face or Enum.NormalId.Front
+ gui.LightInfluence = 0
+ gui.ZOffset = 0.02
+ if pixelsPerStud then
+  gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+  gui.PixelsPerStud = pixelsPerStud
+ else
+  gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+  gui.CanvasSize = canvas or Vector2.new(800, 600)
+ end
+ gui.Parent = host
+ return gui
+end
+
 function Kit.label(host: BasePart, text: string, color: Color3?, face: Enum.NormalId?)
  local gui = Instance.new("SurfaceGui")
  gui.Name = "PrintedMarking"
@@ -1700,6 +1760,949 @@ end
 return VehicleMotion
 
 end)()
+MOD.GlyphLanguage=(function()
+local script={Parent=ParentProxy}
+local require=req
+--!strict
+--[[
+	THE ANCIENT SCRIPT.
+
+	One fictional writing system, defined once, rendered onto every ancient
+	surface in the opening: the seal key, its pedestal, the inner gate, the
+	Aegis Zero chest band, the containment floor, the warning band in the
+	chamber and the lower seal machinery. The repetition is the whole point -
+	a viewer who sees the same four marks on the key, on the door it opens and
+	on the machine behind it learns, without a line of dialogue, that the three
+	things belong to one system. Randomly generated decoration can never do
+	that, so nothing here is random: a glyph is the same shape every time.
+
+	DESIGN RULES (the thing that makes twenty strokes read as one hand):
+
+	  1. Straight strokes only. Every mark is a line segment in a normalised
+	     [-1, 1] box, so it can be drawn as a thin part on a wall, as a beam,
+	     or on a screen, and still be the same glyph.
+	  2. Every glyph has a SPINE - one stroke running most of the height.
+	  3. The BINDING BAR, a horizontal stroke at y = -0.62 running the full
+	     width, appears on every glyph in the containment family (Gate,
+	     Guardian, Bind, Below, Warning) and on no other. That single shared
+	     feature is what makes the warning band read as a sentence about one
+	     subject rather than as five unrelated ornaments.
+	  4. The OPEN CROWN - two strokes meeting at a high apex and never closed
+	     by a third - appears in the transition family (Key, Life, Release,
+	     Return). Containment closes; transition opens.
+	  5. Nothing is mirror-symmetric about its own spine. The archaic
+	     letterforms this borrows its feel from (digamma, koppa, sampi) are
+	     all lopsided, and a symmetric mark reads as a decorative rosette
+	     rather than as writing.
+
+	These are letterforms, not sentences: no arrangement here transliterates
+	any real language, and the names are what the glyph MEANS to the
+	expedition's partial translation, not a pronunciation.
+]]
+
+local GlyphLanguage = {}
+
+export type Stroke = {
+	x1: number,
+	y1: number,
+	x2: number,
+	y2: number,
+}
+
+export type GlyphDefinition = {
+	strokes: { Stroke },
+}
+
+export type GlyphName =
+	"Gate"
+	| "Guardian"
+	| "Bind"
+	| "Key"
+	| "Below"
+	| "Warning"
+	| "Life"
+	| "Release"
+	| "Power"
+	| "Return"
+
+-- Rendered glyph. `setLit(0..1)` takes it from a dead engraving to a fully
+-- illuminated channel without creating or destroying anything, so a gate can
+-- light one mark at a time across a shot without allocating mid-frame.
+export type GlyphHandle = {
+	model: Model,
+	strokes: { BasePart },
+	setLit: (number) -> (),
+	destroy: () -> (),
+}
+
+local BAR = -0.62 -- the binding bar's height, shared by the containment family
+
+GlyphLanguage.Glyphs = {
+	--[[
+		CONTAINMENT FAMILY - all five carry the binding bar at y = BAR.
+	]]
+
+	-- A closed threshold: two uprights and a lintel, with the bar drawn
+	-- across the opening. The right upright is taller and kicks outward, so
+	-- the mark leans.
+	Gate = {
+		strokes = {
+			{ x1 = -0.62, y1 = BAR, x2 = -0.62, y2 = 0.78 },
+			{ x1 = 0.58, y1 = BAR, x2 = 0.72, y2 = 0.96 },
+			{ x1 = -0.62, y1 = 0.78, x2 = 0.72, y2 = 0.96 },
+			{ x1 = -0.86, y1 = BAR, x2 = 0.82, y2 = BAR },
+		},
+	},
+
+	-- A figure holding. Full spine, two braces out to two posts that stand on
+	-- the bar. The right brace is shorter and higher than the left: this is
+	-- the damaged shoulder, and it is the detail that lets the same mark read
+	-- as a portrait of the machine in the chamber.
+	Guardian = {
+		strokes = {
+			{ x1 = -0.06, y1 = 0.98, x2 = -0.06, y2 = BAR },
+			{ x1 = -0.06, y1 = 0.52, x2 = -0.74, y2 = -0.10 },
+			{ x1 = -0.06, y1 = 0.52, x2 = 0.66, y2 = 0.04 },
+			{ x1 = -0.74, y1 = -0.10, x2 = -0.74, y2 = BAR },
+			{ x1 = 0.66, y1 = 0.04, x2 = 0.66, y2 = BAR },
+			{ x1 = -0.92, y1 = BAR, x2 = 0.86, y2 = BAR },
+		},
+	},
+
+	-- Two bars held apart by a diagonal tie. The tie is the glyph: remove it
+	-- and this becomes Release.
+	Bind = {
+		strokes = {
+			{ x1 = 0.02, y1 = 0.92, x2 = 0.02, y2 = BAR },
+			{ x1 = -0.68, y1 = 0.46, x2 = 0.66, y2 = 0.46 },
+			{ x1 = -0.68, y1 = -0.10, x2 = 0.66, y2 = -0.10 },
+			{ x1 = -0.68, y1 = 0.46, x2 = 0.66, y2 = -0.10 },
+			{ x1 = -0.82, y1 = BAR, x2 = 0.78, y2 = BAR },
+		},
+	},
+
+	-- Descending chevrons under a head bar, each narrower than the last and
+	-- each apex pushed left of the one above, so the mark drills downward
+	-- rather than sitting still.
+	Below = {
+		strokes = {
+			{ x1 = -0.86, y1 = 0.74, x2 = 0.80, y2 = 0.74 },
+			{ x1 = -0.66, y1 = 0.74, x2 = -0.04, y2 = 0.20 },
+			{ x1 = -0.04, y1 = 0.20, x2 = 0.72, y2 = 0.74 },
+			{ x1 = -0.46, y1 = 0.20, x2 = -0.14, y2 = -0.24 },
+			{ x1 = -0.14, y1 = -0.24, x2 = 0.44, y2 = 0.22 },
+			{ x1 = -0.88, y1 = BAR, x2 = 0.76, y2 = BAR },
+		},
+	},
+
+	-- A broken spine. Two collinear segments with a gap between them, flanked
+	-- by two struts from the apex - the right one longer, so the mark tips.
+	-- The gap is the warning: this spine does not hold.
+	Warning = {
+		strokes = {
+			{ x1 = 0.00, y1 = 0.98, x2 = 0.00, y2 = 0.34 },
+			{ x1 = 0.00, y1 = 0.10, x2 = 0.00, y2 = -0.34 },
+			{ x1 = -0.70, y1 = 0.62, x2 = 0.00, y2 = 0.98 },
+			{ x1 = 0.00, y1 = 0.98, x2 = 0.78, y2 = 0.54 },
+			{ x1 = -0.84, y1 = BAR, x2 = 0.80, y2 = BAR },
+		},
+	},
+
+	--[[
+		TRANSITION FAMILY - open crown, no binding bar. These are the marks
+		that describe something changing state.
+	]]
+
+	-- An open ring on a spine, with the gap deliberately left on the right:
+	-- the shape of a thing that fits INTO something else. This is the one
+	-- glyph the audience sees as a physical object before they see it written
+	-- (the seal key is built to this outline).
+	Key = {
+		strokes = {
+			{ x1 = -0.10, y1 = 0.96, x2 = 0.52, y2 = 0.52 },
+			{ x1 = -0.10, y1 = 0.96, x2 = -0.66, y2 = 0.44 },
+			{ x1 = -0.66, y1 = 0.44, x2 = -0.62, y2 = -0.26 },
+			{ x1 = -0.62, y1 = -0.26, x2 = -0.02, y2 = -0.70 },
+			{ x1 = -0.02, y1 = -0.70, x2 = 0.56, y2 = -0.34 },
+			{ x1 = -0.10, y1 = 0.96, x2 = -0.10, y2 = -0.16 },
+		},
+	},
+
+	-- Open crown over a stem, with a tilted crossbar and a short foot that
+	-- deliberately stops well short of full width, so it can never be mistaken
+	-- for a binding bar.
+	Life = {
+		strokes = {
+			{ x1 = -0.56, y1 = 0.36, x2 = 0.06, y2 = 0.96 },
+			{ x1 = 0.06, y1 = 0.96, x2 = 0.72, y2 = 0.42 },
+			{ x1 = 0.06, y1 = 0.96, x2 = 0.06, y2 = -0.52 },
+			{ x1 = -0.48, y1 = 0.30, x2 = 0.64, y2 = 0.14 },
+			{ x1 = -0.28, y1 = -0.52, x2 = 0.42, y2 = -0.52 },
+		},
+	},
+
+	-- Bind with the tie snapped: the two bars have sprung apart and only two
+	-- stubs of the tie remain, one on each bar, pointing at where the other
+	-- half used to be.
+	Release = {
+		strokes = {
+			{ x1 = 0.02, y1 = 0.92, x2 = 0.02, y2 = -0.52 },
+			{ x1 = -0.70, y1 = 0.62, x2 = 0.64, y2 = 0.30 },
+			{ x1 = -0.70, y1 = -0.34, x2 = 0.64, y2 = 0.02 },
+			{ x1 = -0.70, y1 = 0.62, x2 = -0.50, y2 = 0.30 },
+			{ x1 = 0.44, y1 = 0.02, x2 = 0.64, y2 = -0.24 },
+		},
+	},
+
+	-- A current running inside a frame that is open on two sides. The zigzag
+	-- crosses the frame's own axis twice, which is what stops it reading as a
+	-- lightning bolt clipart.
+	Power = {
+		strokes = {
+			{ x1 = -0.72, y1 = 0.92, x2 = -0.72, y2 = -0.56 },
+			{ x1 = -0.72, y1 = 0.92, x2 = 0.46, y2 = 0.92 },
+			{ x1 = -0.40, y1 = 0.62, x2 = 0.30, y2 = 0.24 },
+			{ x1 = 0.30, y1 = 0.24, x2 = -0.26, y2 = -0.04 },
+			{ x1 = -0.26, y1 = -0.04, x2 = 0.44, y2 = -0.44 },
+		},
+	},
+
+	-- Out, down, back - and a return stub that stops short of the spine it
+	-- came from. The circuit does not close, which is the difference between
+	-- "return" and "repeat".
+	Return = {
+		strokes = {
+			{ x1 = -0.06, y1 = 0.94, x2 = -0.06, y2 = -0.18 },
+			{ x1 = -0.06, y1 = 0.94, x2 = 0.74, y2 = 0.94 },
+			{ x1 = 0.74, y1 = 0.94, x2 = 0.74, y2 = -0.52 },
+			{ x1 = 0.74, y1 = -0.52, x2 = -0.44, y2 = -0.52 },
+			{ x1 = -0.44, y1 = -0.52, x2 = -0.44, y2 = -0.02 },
+		},
+	},
+} :: { [string]: GlyphDefinition }
+
+-- The two standing arrangements the set actually uses. Naming them here rather
+-- than spelling the lists out at each call site is what keeps the gate, the
+-- key, the pedestal and the Aegis chest carrying the SAME marks - which is the
+-- entire mechanism by which the audience is told they are one system.
+GlyphLanguage.Phrases = {
+	-- Stamped on the key, its cradle, the gate's lock channel and Aegis
+	-- Zero's chest band. Four marks, always in this order.
+	SealAuthority = { "Key", "Gate", "Guardian", "Bind" } :: { GlyphName },
+	-- The band around the chamber. Lyra reads three of these five.
+	ChamberWarning = { "Guardian", "Bind", "Below", "Warning", "Release" } :: { GlyphName },
+}
+
+-- Bronze when dead, hot amber when lit. Ancient machinery only ever uses this
+-- pair; violet belongs to the thing under the floor and cyan to the humans
+-- (see Instrumentation.lua), and the three are never mixed.
+GlyphLanguage.Dead = Color3.fromRGB(118, 92, 52)
+GlyphLanguage.Lit = Color3.fromRGB(240, 172, 78)
+
+local function strokePart(name: string, thickness: number, length: number, depth: number, cf: CFrame, color: Color3): BasePart
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Anchored = true
+	part.CanCollide = false
+	-- Engraved line work is thin trim, not architecture: a glyph stroke must
+	-- never be what an obstruction ray decides a shot is blocked by, the same
+	-- rule Env's route markers and mud flaps already follow.
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Massless = true
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Material = Enum.Material.Slate
+	part.Color = color
+	part.Size = Vector3.new(thickness, length, depth)
+	part.CFrame = cf
+	return part
+end
+
+export type RenderOptions = {
+	thickness: number?, -- stroke width as a fraction of `scale`; default 0.12
+	depth: number?, -- how far the stroke stands off the surface, in studs
+	dead: Color3?,
+	lit: Color3?,
+	name: string?,
+	--[[
+		Whether `setLit` is POWER or merely VISIBILITY. Default true: the mark
+		goes Neon, which is what a live mechanism does.
+
+		False keeps the material as Slate and only lerps the colour, for the
+		bands that are being cleaned rather than energised - frost brushed out
+		of an engraved channel so the bronze underneath catches a hand lamp.
+		Those must never glow: a warning carved on a wall that lights up by
+		itself tells the audience the building is awake, which is a completely
+		different film from the one where a dead facility stays dead until
+		somebody puts a key in it.
+	]]
+	emissive: boolean?,
+}
+
+--[[
+	Draws one glyph on the XY plane of `center`, with `center`'s local +Z as
+	the surface normal (so pass the face's own CFrame and the mark sits on it).
+	`scale` is the half-height in studs: a glyph drawn at scale 1 occupies
+	roughly two studs square.
+]]
+function GlyphLanguage.render(
+	parent: Instance,
+	glyph: GlyphName,
+	center: CFrame,
+	scale: number,
+	color: Color3?,
+	options: RenderOptions?
+): GlyphHandle
+	local definition = GlyphLanguage.Glyphs[glyph]
+	if not definition then
+		error(`GlyphLanguage: no glyph named "{glyph}"`)
+	end
+	local opts: RenderOptions = options or {}
+	local dead = opts.dead or color or GlyphLanguage.Dead
+	local lit = opts.lit or GlyphLanguage.Lit
+	local emissive = opts.emissive ~= false
+	local thickness = (opts.thickness or 0.12) * scale
+	local depth = opts.depth or math.max(0.06, scale * 0.09)
+
+	local model = Instance.new("Model")
+	model.Name = opts.name or (`Glyph_{glyph}`)
+	model.Parent = parent
+
+	local strokes: { BasePart } = {}
+	for index, stroke in definition.strokes do
+		local dx = (stroke.x2 - stroke.x1) * scale
+		local dy = (stroke.y2 - stroke.y1) * scale
+		local length = math.sqrt(dx * dx + dy * dy)
+		if length > 1e-4 then
+			local mx = (stroke.x1 + stroke.x2) * 0.5 * scale
+			local my = (stroke.y1 + stroke.y2) * 0.5 * scale
+			-- A part's length runs along its own local Y. Rotating by theta
+			-- about local Z sends that axis to (-sin, cos), so theta =
+			-- atan2(-dx, dy) points it along the stroke.
+			local theta = math.atan2(-dx, dy)
+			-- Overrun by one stroke width so consecutive strokes meet at a
+			-- solid corner instead of leaving a pinhole at every junction.
+			local part = strokePart(
+				`Stroke{index}`,
+				thickness,
+				length + thickness,
+				depth,
+				center * CFrame.new(mx, my, depth * 0.5) * CFrame.Angles(0, 0, theta),
+				dead
+			)
+			part.Parent = model
+			table.insert(strokes, part)
+		end
+	end
+
+	local handle: GlyphHandle
+	handle = {
+		model = model,
+		strokes = strokes,
+		setLit = function(amount: number)
+			local a = math.clamp(amount, 0, 1)
+			-- One material switch and one colour lerp per stroke, and no
+			-- lights at all: a gate carries dozens of these, and a PointLight
+			-- per mark would blow the whole scene's light budget on
+			-- decoration (see Kit.resetLightBudget).
+			local material = if emissive and a > 0.02 then Enum.Material.Neon else Enum.Material.Slate
+			local tint = dead:Lerp(lit, a)
+			for _, part in strokes do
+				part.Material = material
+				part.Color = tint
+			end
+		end,
+		destroy = function()
+			model:Destroy()
+		end,
+	}
+	handle.setLit(0)
+	return handle
+end
+
+export type BandHandle = {
+	model: Model,
+	glyphs: { GlyphHandle },
+	setLit: (number) -> (),
+	-- Lights the band one mark at a time, left to right: pass 0..#glyphs.
+	-- 1.4 means "the first is fully lit, the second is four-tenths of the way
+	-- there". This is how energy is shown travelling THROUGH a mechanism
+	-- rather than the whole thing switching on at once.
+	setProgress: (number) -> (),
+	destroy: () -> (),
+}
+
+--[[
+	A row of glyphs along `start`'s local +X. Used for the wall bands, the
+	gate's lock channel, the key's flank and Aegis Zero's chest.
+]]
+function GlyphLanguage.band(
+	parent: Instance,
+	glyphs: { GlyphName },
+	start: CFrame,
+	scale: number,
+	spacing: number?,
+	color: Color3?,
+	options: RenderOptions?
+): BandHandle
+	local step = spacing or scale * 2.8
+	local model = Instance.new("Model")
+	model.Name = (options and options.name) or "GlyphBand"
+	model.Parent = parent
+
+	local rendered: { GlyphHandle } = {}
+	local count = #glyphs
+	for index, glyph in glyphs do
+		local offset = (index - (count + 1) * 0.5) * step
+		table.insert(rendered, GlyphLanguage.render(model, glyph :: GlyphName, start * CFrame.new(offset, 0, 0), scale, color, options))
+	end
+
+	local handle: BandHandle
+	handle = {
+		model = model,
+		glyphs = rendered,
+		setLit = function(amount: number)
+			for _, glyph in rendered do
+				glyph.setLit(amount)
+			end
+		end,
+		setProgress = function(progress: number)
+			for index, glyph in rendered do
+				glyph.setLit(math.clamp(progress - (index - 1), 0, 1))
+			end
+		end,
+		destroy = function()
+			model:Destroy()
+		end,
+	}
+	handle.setLit(0)
+	return handle
+end
+
+--[[
+	The same glyphs arranged around a circle on `center`'s XY plane, each
+	rotated to stand upright on the ring. Used for the gate's lock face and
+	the containment floor, where a row would read as signage and a ring reads
+	as a mechanism.
+]]
+function GlyphLanguage.ring(
+	parent: Instance,
+	glyphs: { GlyphName },
+	center: CFrame,
+	radius: number,
+	scale: number,
+	color: Color3?,
+	options: RenderOptions?
+): BandHandle
+	local model = Instance.new("Model")
+	model.Name = (options and options.name) or "GlyphRing"
+	model.Parent = parent
+
+	local rendered: { GlyphHandle } = {}
+	local count = #glyphs
+	for index, glyph in glyphs do
+		local angle = (index - 1) / count * math.pi * 2
+		local placement = center
+			* CFrame.new(math.sin(angle) * radius, math.cos(angle) * radius, 0)
+			* CFrame.Angles(0, 0, -angle)
+		table.insert(rendered, GlyphLanguage.render(model, glyph :: GlyphName, placement, scale, color, options))
+	end
+
+	local handle: BandHandle
+	handle = {
+		model = model,
+		glyphs = rendered,
+		setLit = function(amount: number)
+			for _, glyph in rendered do
+				glyph.setLit(amount)
+			end
+		end,
+		setProgress = function(progress: number)
+			for index, glyph in rendered do
+				glyph.setLit(math.clamp(progress - (index - 1), 0, 1))
+			end
+		end,
+		destroy = function()
+			model:Destroy()
+		end,
+	}
+	handle.setLit(0)
+	return handle
+end
+
+return GlyphLanguage
+
+end)()
+MOD.Instrumentation=(function()
+local script={Parent=ParentProxy}
+local require=req
+--!strict
+--[[
+	HUMAN EXPEDITION INSTRUMENTATION.
+
+	This module owns the expedition's own screens and nothing else. It does not
+	sequence shots, it does not build world geometry, and it never touches the
+	fullscreen cinematic overlay - the bore telemetry is DIEGETIC, a physical
+	panel on a physical console that the camera has to be pointed at. A
+	fullscreen HUD would also quietly destroy the thing this whole sequence is
+	about: the audience is meant to be standing on the ice with the expedition,
+	reading what they read, not being handed the answer by the game.
+
+	VISUAL LANGUAGE - deliberately, absolutely unlike anything ancient:
+
+	    HUMAN (here)     rectangles, English labels, monospaced numbers, thin
+	                     rules, a small trace graph; near-black background,
+	                     off-white text, muted cyan data, amber for a caution,
+	                     red reserved for one genuine failure.
+	    ANCIENT          glyph strokes, no words, radial or banded, bronze
+	                     when dead and amber when live (see GlyphLanguage).
+	    THE PRISONER     violet, and violet appears nowhere else.
+
+	Those three are never mixed, in this module or anywhere else in the
+	opening. It is how the audience knows, at a glance, whose technology they
+	are looking at.
+
+	CALM UNTIL IT IS NOT. Everything below is built so that the normal state is
+	boring: aligned rows, steady values, one quiet trace. The alarm state is
+	then one or two strong regions appearing on an otherwise unchanged panel,
+	never a screen full of flashing text - a calm instrument developing a
+	single red band is far more alarming than a panel that was always shouting.
+
+	PERFORMANCE. Every element is created once, in create(), and only ever has
+	its Text/Size/Color written afterwards, and only when the value actually
+	changed. Nothing here allocates per frame.
+]]
+
+local Kit = require(script.Parent.Kit)
+
+local Instrumentation = {}
+
+export type DrillTelemetry = {
+	depth: number, -- metres of hole made
+	hosePayout: number, -- metres of hose off the reel; always a little more than depth
+	waterTemperature: number, -- degrees C at the nozzle
+	linePressure: number, -- MPa
+	flowRate: number, -- litres per minute
+	signalStrength: number, -- multiple of the baseline return, 1.0 = nominal
+	returnDensity: number, -- 1 normal, 0 nothing coming back
+	state: string, -- "ACTIVE", "HOLD", "FAULT" ...
+	sourceEstimate: number?, -- metres; nil leaves the footer as it was
+	alert: string?, -- one caution line, or nil for none
+}
+
+export type DrillDisplay = {
+	gui: SurfaceGui,
+	setTelemetry: (DrillTelemetry) -> (),
+	-- The second argument is the severity: "caution" (amber, the default) or
+	-- "critical" (red). Red is for a containment failure and for nothing else.
+	setAlert: (string?, string?) -> (),
+	-- Writes one named row directly, for the readings that are not numbers -
+	-- "SOURCE DEPTH / LOCKED", "RETURN DENSITY / LOST".
+	setRow: (string, string, string?) -> (),
+	setFooter: (string, string, string?) -> (),
+	-- Feeds the trace graph. 0..1, where 1 fills the band.
+	pushSignal: (number) -> (),
+	destroy: () -> (),
+}
+
+export type RowSpec = { key: string, label: string }
+
+export type DisplayConfig = {
+	title: string,
+	face: Enum.NormalId?,
+	canvas: Vector2?,
+	rows: { RowSpec }?,
+	graph: boolean?,
+	footerLabel: string?,
+	footerValue: string?,
+}
+
+local INK = {
+	background = Color3.fromRGB(13, 16, 19),
+	panel = Color3.fromRGB(20, 25, 29),
+	rule = Color3.fromRGB(48, 58, 65),
+	label = Color3.fromRGB(139, 150, 156),
+	text = Color3.fromRGB(216, 221, 218),
+	data = Color3.fromRGB(122, 190, 202),
+	amber = Color3.fromRGB(216, 154, 66),
+	red = Color3.fromRGB(201, 72, 55),
+	trace = Color3.fromRGB(96, 158, 172),
+}
+Instrumentation.Ink = INK
+
+local GRAPH_SAMPLES = 44
+
+local DEFAULT_ROWS: { RowSpec } = {
+	{ key = "depth", label = "DEPTH" },
+	{ key = "payout", label = "HOSE PAYOUT" },
+	{ key = "temperature", label = "WATER TEMP" },
+	{ key = "pressure", label = "LINE PRESSURE" },
+	{ key = "flow", label = "FLOW" },
+	{ key = "density", label = "RETURN DENSITY" },
+}
+
+local function frame(parent: Instance, name: string, position: UDim2, size: UDim2, color: Color3?, transparency: number?): Frame
+	local element = Instance.new("Frame")
+	element.Name = name
+	element.Position = position
+	element.Size = size
+	element.BackgroundColor3 = color or INK.panel
+	element.BackgroundTransparency = transparency or 0
+	element.BorderSizePixel = 0
+	element.Parent = parent
+	return element
+end
+
+local function text(
+	parent: Instance,
+	name: string,
+	position: UDim2,
+	size: UDim2,
+	content: string,
+	textSize: number,
+	color: Color3,
+	alignment: Enum.TextXAlignment,
+	font: Enum.Font
+): TextLabel
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.Position = position
+	label.Size = size
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Text = content
+	label.TextSize = textSize
+	label.TextColor3 = color
+	label.TextXAlignment = alignment
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Font = font
+	label.Parent = parent
+	return label
+end
+
+-- Thousands separated, fixed decimals: "1,984" and "642.8" rather than
+-- "1984.0" and "642.80000000001". A field instrument that prints raw floats
+-- reads as a debug overlay, which is the one thing this must not look like.
+local function number(value: number, decimals: number): string
+	local rounded = string.format(`%.{decimals}f`, value)
+	local whole, fraction = rounded:match("^(%-?%d+)(.*)$")
+	if not whole then
+		return rounded
+	end
+	local sign = ""
+	if whole:sub(1, 1) == "-" then
+		sign = "-"
+		whole = whole:sub(2)
+	end
+	local grouped = whole:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+	return sign .. grouped .. (fraction or "")
+end
+Instrumentation.formatNumber = number
+
+--[[
+	Builds a panel on `host`. `config.rows` names the rows it carries; the
+	returned display writes them by key. Two ready-made arrangements are below
+	(boreConsole / fieldMonitor); both go through this, so both look like the
+	same manufacturer built them.
+]]
+function Instrumentation.create(host: BasePart, config: DisplayConfig): DrillDisplay
+	local canvas = config.canvas or Vector2.new(880, 640)
+	local gui = Kit.surfaceGui(host, config.face, nil, canvas)
+	gui.Name = "Instrumentation"
+
+	local root = frame(gui, "Bezel", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), INK.background)
+
+	local width = canvas.X
+	local height = canvas.Y
+	local margin = math.floor(width * 0.055)
+	local inner = width - margin * 2
+
+	-- Header: the instrument names itself and states what it is doing. The
+	-- state word on the right is the only thing up here that ever changes.
+	text(
+		root,
+		"Title",
+		UDim2.fromOffset(margin, math.floor(height * 0.045)),
+		UDim2.fromOffset(math.floor(inner * 0.62), math.floor(height * 0.075)),
+		config.title,
+		math.floor(height * 0.058),
+		INK.text,
+		Enum.TextXAlignment.Left,
+		Enum.Font.GothamMedium
+	)
+	local stateLabel = text(
+		root,
+		"State",
+		UDim2.fromOffset(margin + math.floor(inner * 0.62), math.floor(height * 0.045)),
+		UDim2.fromOffset(math.floor(inner * 0.38), math.floor(height * 0.075)),
+		"STANDBY",
+		math.floor(height * 0.05),
+		INK.data,
+		Enum.TextXAlignment.Right,
+		Enum.Font.Code
+	)
+	frame(root, "HeaderRule", UDim2.fromOffset(margin, math.floor(height * 0.14)), UDim2.fromOffset(inner, 2), INK.rule)
+
+	-- Data rows.
+	local rowSpecs = config.rows or DEFAULT_ROWS
+	local rowTop = math.floor(height * 0.185)
+	local rowHeight = math.floor(height * 0.072)
+	local rowGap = math.floor(height * 0.018)
+	local values: { [string]: TextLabel } = {}
+	for index, spec in rowSpecs do
+		local y = rowTop + (index - 1) * (rowHeight + rowGap)
+		text(
+			root,
+			spec.key .. "Label",
+			UDim2.fromOffset(margin, y),
+			UDim2.fromOffset(math.floor(inner * 0.55), rowHeight),
+			spec.label,
+			math.floor(height * 0.042),
+			INK.label,
+			Enum.TextXAlignment.Left,
+			Enum.Font.Gotham
+		)
+		values[spec.key] = text(
+			root,
+			spec.key .. "Value",
+			UDim2.fromOffset(margin + math.floor(inner * 0.45), y),
+			UDim2.fromOffset(math.floor(inner * 0.55), rowHeight),
+			"—",
+			math.floor(height * 0.05),
+			INK.data,
+			Enum.TextXAlignment.Right,
+			Enum.Font.Code
+		)
+	end
+
+	local afterRows = rowTop + #rowSpecs * (rowHeight + rowGap) + math.floor(height * 0.015)
+
+	-- Signal trace. Forty-four thin bars, written in place: a real instrument
+	-- draws a line, and a line is the one element here that can carry "this
+	-- has been quietly doing the same thing for hours" and then "this just
+	-- changed" without a single word.
+	local bars: { Frame } = {}
+	local graphBottom = afterRows
+	if config.graph ~= false then
+		text(
+			root,
+			"TraceLabel",
+			UDim2.fromOffset(margin, afterRows),
+			UDim2.fromOffset(inner, math.floor(height * 0.055)),
+			"SIGNAL RETURN",
+			math.floor(height * 0.04),
+			INK.label,
+			Enum.TextXAlignment.Left,
+			Enum.Font.Gotham
+		)
+		local graphTop = afterRows + math.floor(height * 0.06)
+		local graphHeight = math.floor(height * 0.16)
+		frame(root, "TraceWell", UDim2.fromOffset(margin, graphTop), UDim2.fromOffset(inner, graphHeight), INK.panel)
+		local barWidth = math.max(2, math.floor(inner / GRAPH_SAMPLES) - 2)
+		for index = 1, GRAPH_SAMPLES do
+			local x = margin + math.floor((index - 1) * inner / GRAPH_SAMPLES) + 1
+			local bar = frame(
+				root,
+				`Trace{index}`,
+				UDim2.fromOffset(x, graphTop + graphHeight - 3),
+				UDim2.fromOffset(barWidth, 3),
+				INK.trace
+			)
+			bars[index] = bar
+			bar:SetAttribute("BaseY", graphTop + graphHeight)
+			bar:SetAttribute("Span", graphHeight - 4)
+			bar:SetAttribute("Width", barWidth)
+			bar:SetAttribute("X", x)
+		end
+		graphBottom = graphTop + graphHeight + math.floor(height * 0.02)
+	end
+
+	-- Footer: the one figure the whole expedition is here for.
+	frame(root, "FooterRule", UDim2.fromOffset(margin, graphBottom), UDim2.fromOffset(inner, 2), INK.rule)
+	local footerY = graphBottom + math.floor(height * 0.022)
+	local footerHeight = math.floor(height * 0.072)
+	text(
+		root,
+		"FooterLabel",
+		UDim2.fromOffset(margin, footerY),
+		UDim2.fromOffset(math.floor(inner * 0.6), footerHeight),
+		config.footerLabel or "SOURCE ESTIMATE",
+		math.floor(height * 0.042),
+		INK.label,
+		Enum.TextXAlignment.Left,
+		Enum.Font.Gotham
+	)
+	local footerValue = text(
+		root,
+		"FooterValue",
+		UDim2.fromOffset(margin + math.floor(inner * 0.4), footerY),
+		UDim2.fromOffset(math.floor(inner * 0.6), footerHeight),
+		config.footerValue or "—",
+		math.floor(height * 0.05),
+		INK.data,
+		Enum.TextXAlignment.Right,
+		Enum.Font.Code
+	)
+
+	-- The alert band, built hidden. It sits OVER the lower rows rather than
+	-- beside them, so when it appears it visibly interrupts the panel.
+	local alertBand = frame(
+		root,
+		"AlertBand",
+		UDim2.fromOffset(margin, footerY + footerHeight + math.floor(height * 0.012)),
+		UDim2.fromOffset(inner, math.floor(height * 0.082)),
+		INK.amber
+	)
+	alertBand.Visible = false
+	local alertText = text(
+		alertBand,
+		"AlertText",
+		UDim2.fromOffset(math.floor(width * 0.02), 0),
+		UDim2.fromScale(0.96, 1),
+		"",
+		math.floor(height * 0.046),
+		INK.background,
+		Enum.TextXAlignment.Left,
+		Enum.Font.GothamMedium
+	)
+
+	-- Cached last-written strings. Writing a TextLabel's Text is not free, and
+	-- these are driven from a per-frame shot update.
+	local written: { [string]: string } = {}
+	local trace: { number } = table.create(GRAPH_SAMPLES, 0.12)
+	local traceCursor = 0
+
+	local function write(label: TextLabel, key: string, value: string, tone: Color3?)
+		if written[key] ~= value then
+			written[key] = value
+			label.Text = value
+		end
+		if tone and label.TextColor3 ~= tone then
+			label.TextColor3 = tone
+		end
+	end
+
+	local function toneFor(name: string?): Color3
+		if name == "critical" then
+			return INK.red
+		elseif name == "caution" then
+			return INK.amber
+		elseif name == "label" then
+			return INK.label
+		end
+		return INK.data
+	end
+
+	local display: DrillDisplay
+	display = {
+		gui = gui,
+		setRow = function(key: string, value: string, tone: string?)
+			local label = values[key]
+			if label then
+				write(label, key, value, toneFor(tone))
+			end
+		end,
+		setFooter = function(label: string, value: string, tone: string?)
+			local footerLabelElement = root:FindFirstChild("FooterLabel") :: TextLabel?
+			if footerLabelElement then
+				write(footerLabelElement, "footerLabel", label, INK.label)
+			end
+			write(footerValue, "footerValue", value, toneFor(tone))
+		end,
+		setAlert = function(message: string?, level: string?)
+			if not message or message == "" then
+				alertBand.Visible = false
+				return
+			end
+			alertBand.Visible = true
+			alertBand.BackgroundColor3 = if level == "critical" then INK.red else INK.amber
+			write(alertText, "alert", message, INK.background)
+		end,
+		pushSignal = function(value: number)
+			traceCursor += 1
+			trace[(traceCursor % GRAPH_SAMPLES) + 1] = math.clamp(value, 0, 1)
+			for index, bar in bars do
+				-- Read oldest-first so the trace scrolls left, the way a
+				-- strip chart does, instead of flickering in place.
+				local sample = trace[((traceCursor + index) % GRAPH_SAMPLES) + 1] or 0
+				local span = (bar:GetAttribute("Span") :: number?) or 1
+				local baseY = (bar:GetAttribute("BaseY") :: number?) or 0
+				local barWidth = (bar:GetAttribute("Width") :: number?) or 2
+				local x = (bar:GetAttribute("X") :: number?) or 0
+				local barHeight = math.max(2, math.floor(sample * span))
+				bar.Size = UDim2.fromOffset(barWidth, barHeight)
+				bar.Position = UDim2.fromOffset(x, baseY - barHeight - 2)
+			end
+		end,
+		setTelemetry = function(telemetry: DrillTelemetry)
+			write(stateLabel, "state", telemetry.state, if telemetry.state == "FAULT" then INK.red else INK.data)
+			display.setRow("depth", `{number(telemetry.depth, 1)} m`)
+			display.setRow("payout", `{number(telemetry.hosePayout, 1)} m`)
+			display.setRow("temperature", `{number(telemetry.waterTemperature, 0)} °C`)
+			display.setRow(
+				"pressure",
+				`{number(telemetry.linePressure, 1)} MPa`,
+				if telemetry.linePressure < 4 then "caution" else nil
+			)
+			display.setRow("flow", `{number(telemetry.flowRate, 0)} L/min`)
+			if telemetry.returnDensity <= 0.02 then
+				display.setRow("density", "LOST", "critical")
+			elseif telemetry.returnDensity < 0.6 then
+				display.setRow("density", "FALLING", "caution")
+			else
+				display.setRow("density", "NORMAL")
+			end
+			if telemetry.sourceEstimate then
+				display.setFooter("SOURCE ESTIMATE", `{number(telemetry.sourceEstimate, 0)} m`)
+			end
+			display.pushSignal(math.clamp(0.08 + telemetry.signalStrength * 0.1, 0, 1))
+			display.setAlert(telemetry.alert, if telemetry.alert then "caution" else nil)
+		end,
+		destroy = function()
+			gui:Destroy()
+		end,
+	}
+	return display
+end
+
+-- The operator console at the bore head. Full telemetry, the trace, and the
+-- source estimate the whole expedition is chasing.
+function Instrumentation.boreConsole(host: BasePart, face: Enum.NormalId?): DrillDisplay
+	return Instrumentation.create(host, {
+		title = "DEEP BORE 07",
+		face = face,
+		canvas = Vector2.new(880, 660),
+		rows = DEFAULT_ROWS,
+		graph = true,
+		footerLabel = "SOURCE ESTIMATE",
+		footerValue = "1,984 m",
+	})
+end
+
+-- The portable unit the team carries down with them. Same manufacturer, fewer
+-- rows, because it is a survey monitor rather than a rig console - and it is
+-- what reports the spike once the floor starts to fail.
+function Instrumentation.fieldMonitor(host: BasePart, face: Enum.NormalId?): DrillDisplay
+	return Instrumentation.create(host, {
+		title = "FIELD SURVEY 02",
+		face = face,
+		canvas = Vector2.new(760, 520),
+		rows = {
+			{ key = "signal", label = "SIGNAL RETURN" },
+			{ key = "depth", label = "SOURCE DEPTH" },
+			{ key = "bearing", label = "SOURCE POSITION" },
+		},
+		graph = true,
+		footerLabel = "STATUS",
+		footerValue = "TRACKING",
+	})
+end
+
+return Instrumentation
+
+end)()
 MOD.Env=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -1708,6 +2711,8 @@ local require=req
 -- solid shells superimposed on the exterior. No global Terrain edits to undo.
 local Kit = require(script.Parent.Kit)
 local VehicleMotion = require(script.Parent.VehicleMotion)
+local Glyph = require(script.Parent.GlyphLanguage)
+local Instrumentation = require(script.Parent.Instrumentation)
 local Env = {}
 local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
 local C = {
@@ -1741,10 +2746,43 @@ local C = {
  -- lightest thing in frame that is not a screen.
  labWall = Color3.fromRGB(126,134,142), labWallDark = Color3.fromRGB(84,92,100),
  labFloor = Color3.fromRGB(58,64,70), labTrim = Color3.fromRGB(130,137,144),
+ --[[
+  THE ABANDONED FACILITY. The old ancient interior was marble, ivory and gold
+  with fluted pillars, which reads as a temple - and a temple tells the
+  audience "this is a shrine somebody built to be looked at", when the whole
+  point of the new sequence is that the expedition has broken into a
+  WORKING INSTALLATION that stopped working.
+
+  So: dark worn metal and black composite carry the volume, slate carries the
+  floor, and oxidised bronze is an ACCENT on the mechanisms only - never a
+  surface. Ivory survives on small armour-like plates, the same material
+  language Aegis Zero itself is built from, which is what quietly ties the
+  building to the thing inside it before anybody says so.
+
+  Everything here sits well below the command room's own values: this is a
+  place lit by five surviving fixtures and whatever the expedition carried in,
+  and a mid-grey wall under a hand lamp is already the brightest thing in
+  frame.
+ ]]
+ facMetal = Color3.fromRGB(52,57,62), facSlate = Color3.fromRGB(40,45,49),
+ facComposite = Color3.fromRGB(26,29,33), facPanel = Color3.fromRGB(66,72,78),
+ bronze = Color3.fromRGB(122,96,54), bronzeDark = Color3.fromRGB(74,60,38),
+ frost = Color3.fromRGB(150,174,188), facIvory = Color3.fromRGB(162,164,152),
+ -- Ancient emergency lighting is cold and weak; the expedition's own lamps
+ -- are warm. Keeping those two apart is how the audience reads which light
+ -- belongs to the building and which the humans brought with them.
+ ancientEmergency = Color3.fromRGB(96,168,196),
 }
 Env.Colors = C
 Env.Zones = {
- BaseCenter = V(0,9500,0), Command = V(650,9500,0), Door = V(1000,9500,0),
+ BaseCenter = V(0,9500,0), Command = V(650,9500,0),
+ -- The open cut. A separate sound stage, for the same reason every interior
+ -- in this file is one: the exterior's ground is a single 1100-stud slab, and
+ -- a pit dug into it would be a hole in a solid box that every camera looking
+ -- in has to shoot through. Built as its own volume, the excavation can be
+ -- lit, framed and walked into without touching the Arctic set at all.
+ Excavation = V(820,9500,0),
+ Door = V(1000,9500,0),
  ChamberFloor = V(1400,9500,0), ChamberCenter = V(1400,9520,0),
  PrisonCenter = V(2000,9300,0), Space = V(3000,10300,0),
 }
@@ -2079,6 +3117,328 @@ local function vehicle(parent,cf,kind,index)
  Env.settleVehicle(handle,cf.Position,cf.LookVector)
  return handle
 end
+--------------------------------------------------------------------------------
+-- THE DEEP BORE
+--
+-- Replaces a 12-stud rotating auger with a hot-water bore plant, because the
+-- auger was telling the audience the wrong story. A screw that chews a metre
+-- of ice at a time is a post-hole digger; this expedition believes its signal
+-- is two kilometres down, and the only thing that looks capable of that is a
+-- plant that sends HEAT down a hose. The whole design exists to make one
+-- sentence readable without dialogue: this machine puts something very deep
+-- into the ice.
+--
+-- Five functional masses, and deliberately no more. A single enormous vehicle
+-- covered in greebles reads as a toy; five separated objects joined by visible
+-- hose and cable read as a system, because the eye can follow what feeds what:
+--
+--     POWER/FUEL BANK ──cable──▶ HEATER/PUMP SKID ──hose──▶ HOSE REEL
+--                                                              │
+--                                            over the crown sheave
+--                                                              ▼
+--                            CONSOLE ◀──cable──         BORE TOWER ──▶ HOLE
+--
+-- Two things are load-bearing for the camera rather than for the fiction. The
+-- reel carries spokes and one hi-vis timing mark for the same reason the truck
+-- wheels do - a rotating cylinder shows no rotation, so "the reel is running"
+-- would otherwise be unobservable. And the console screen is a real
+-- Instrumentation panel (see that module) rather than a printed marking,
+-- because six values have to change independently across the sequence.
+--------------------------------------------------------------------------------
+
+local BORE = V(0,0,-28) -- the hole itself, relative to BaseCenter
+local BORE_TOWER_TOP = 21
+
+local function boreSystem(env,root,o)
+ local bore=o+BORE
+ local sys=Kit.folder("DeepBorePlant",root)
+
+ -- 1. THE TOWER --------------------------------------------------------------
+ -- A tapered lattice over the hole, tall enough to read from the arrival
+ -- crane's distance and open enough that the hose inside it stays visible.
+ local tower=Kit.model("BoreTower",sys)
+ env.boreTower=tower
+ local legs={{-1,-1},{-1,1},{1,-1},{1,1}}
+ for index,leg in legs do
+  local baseX,baseZ=leg[1]*2.7,leg[2]*2.7
+  local topX,topZ=leg[1]*1.15,leg[2]*1.15
+  Kit.beam(tower,`TowerLeg{index}`,bore+V(baseX,0,baseZ),bore+V(topX,BORE_TOWER_TOP,topZ),0.42,C.hullDark)
+ end
+ for level=0,4 do
+  local y=2.2+level*4.4
+  local t=y/BORE_TOWER_TOP
+  local r=2.7+(1.15-2.7)*t
+  local corners={V(-r,y,-r),V(-r,y,r),V(r,y,r),V(r,y,-r)}
+  for i=1,4 do
+   local a=bore+corners[i]
+   local b=bore+corners[i%4+1]
+   Kit.beam(tower,"TowerGirt",a,b,0.24,C.metal)
+   -- One diagonal per bay per level, alternating direction, so the lattice
+   -- reads as braced structure instead of a stack of square hoops.
+   local upper=2.7+(1.15-2.7)*((y+4.4)/BORE_TOWER_TOP)
+   if level<4 then
+    local lift=V(0,4.4,0)
+    local target=if (i+level)%2==0 then b*(upper/r)+lift else a*(upper/r)+lift
+    Kit.beam(tower,"TowerBrace",a,bore+target,0.16,C.metal)
+   end
+  end
+ end
+ -- Crown block: the sheaves the hose runs over, and the reason the tower has
+ -- a top rather than simply stopping.
+ part(tower,"CrownDeck",V(4.4,0.35,4.4),CF(bore+V(0,BORE_TOWER_TOP,0)),C.hullDark,Enum.Material.DiamondPlate)
+ for _,side in {-0.75,0.75} do
+  cylinder(tower,"CrownSheave",V(0.45,2.3,2.3),CF(bore+V(side,BORE_TOWER_TOP+1.3,0)),C.hull)
+  cylinder(tower,"SheaveHub",V(0.55,0.7,0.7),CF(bore+V(side,BORE_TOWER_TOP+1.3,0)),C.bronze)
+ end
+ part(tower,"CrownGuard",V(4.6,1.4,0.3),CF(bore+V(0,BORE_TOWER_TOP+1.4,1.9)),C.hiVis)
+ -- A working platform partway up, with a ladder to it: scale reference, and
+ -- somewhere a person could plausibly be.
+ part(tower,"TowerPlatform",V(6.4,0.28,3),CF(bore+V(0,8.4,2.6)),C.metal,Enum.Material.DiamondPlate)
+ Kit.beam(tower,"PlatformRail",bore+V(-3.2,9.6,4),bore+V(3.2,9.6,4),0.12,C.hiVis)
+ for rung=1,15 do
+  Kit.beam(tower,"TowerLadderRung",bore+V(-0.7,rung*0.55,3.4),bore+V(0.7,rung*0.55,3.4),0.1,C.metal)
+ end
+ for _,x in {-0.75,0.75} do
+  Kit.beam(tower,"TowerLadderStile",bore+V(x,0,3.4),bore+V(x,8.6,3.4),0.12,C.metal)
+ end
+ -- Guys out to four ground anchors. Thin trim, so they opt out of camera
+ -- queries the way the route markers do.
+ for _,anchor in {V(-11,0,-39),V(11,0,-39),V(-11,0,-17),V(11,0,-17)} do
+  local guy=Kit.beam(sys,"TowerGuy",bore+V(0,BORE_TOWER_TOP-2.5,0),o+anchor,0.09,C.dark)
+  guy.CanQuery=false
+  part(sys,"GuyAnchor",V(1.2,0.5,1.2),CF(o+anchor+V(0,0.25,0)),C.hullDark)
+ end
+
+ -- 2. THE HOLE ---------------------------------------------------------------
+ -- A raised steel collar, a black throat, a melt channel and a sump. Without
+ -- the collar the bore is a dark smudge on white ground; with it, it is
+ -- obviously an engineered opening.
+ local collar=Kit.model("BoreCollar",sys)
+ env.boreCollar=collar
+ for i=1,12 do
+  local a=i/12*math.pi*2
+  part(collar,"CollarSegment",V(1.4,0.9,0.7),CF(bore+V(math.sin(a)*2.1,0.45,math.cos(a)*2.1))*A(0,a,0),C.hullDark,Enum.Material.DiamondPlate)
+ end
+ env.boreThroat=part(collar,"BoreThroat",V(3.4,0.3,3.4),CF(bore+V(0,0.18,0)),Color3.fromRGB(8,10,14),Enum.Material.SmoothPlastic,"ball")
+ part(collar,"CollarDeck",V(9,0.2,9),CF(bore+V(0,0.1,0)),C.ice:Lerp(C.deep,0.35),Enum.Material.Ice)
+ part(collar,"MeltChannel",V(1.1,0.16,7),CF(bore+V(3.4,0.14,3.5)),C.ice:Lerp(C.deep,0.55),Enum.Material.Ice)
+ part(collar,"MeltSump",V(3,0.5,3),CF(bore+V(3.4,0.05,7.4)),C.deep,Enum.Material.Glass,nil,0.35)
+ for i=1,10 do
+  Kit.beam(sys,"FracturedIce",bore+V(0,0.4,0),bore+V(math.sin(i)*7,0.4,math.cos(i)*7),0.08,C.deep)
+ end
+ -- Steam off the hole is the single clearest "this is hot water, in the
+ -- Arctic" signal in the frame, so it gets a real host part and its rate is
+ -- driven per shot rather than left running.
+ local vent=part(sys,"BoreVent",V(3,2,3),CF(bore+V(0,1.4,0)),C.snow,nil,nil,1)
+ env.boreSteam=Kit.dust(vent,0,Color3.fromRGB(226,234,240),6)
+ env.boreSteam.Acceleration=V(1.2,5,0.4)
+ env.boreSteam.Lifetime=NumberRange.new(1.2,2.8)
+ env.boreSteam.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,0.6),NumberSequenceKeypoint.new(1,5.5)})
+
+ -- 3. THE HOSE REEL ----------------------------------------------------------
+ local reelAxle=o+V(-12.5,4.6,-23.5)
+ env.reelAxle=CF(reelAxle)
+ local reel=Kit.model("HoseReel",sys)
+ -- Exposed so 07d can declare it: that shot frames the reel, so the near
+ -- flange is in front of the axle it is focused on BY CONSTRUCTION, and
+ -- without `foreground` the camera spends the beat correcting away from the
+ -- only thing it is there to look at.
+ env.hoseReel=reel
+ local drum=Kit.model("ReelDrum",reel)
+ cylinder(drum,"ReelBarrel",V(7,6.4,6.4),CF(reelAxle),C.hullDark)
+ -- Wrapped hose, as four bands of decreasing tidiness. One solid cylinder
+ -- reads as a pipe; bands read as something wound.
+ for i=0,3 do
+  cylinder(drum,"WoundHose",V(1.5,8.4-i*0.28,8.4-i*0.28),CF(reelAxle+V(-2.6+i*1.75,0,0)),C.dark)
+ end
+ for _,side in {-1,1} do
+  cylinder(drum,"ReelFlange",V(0.45,9.6,9.6),CF(reelAxle+V(side*3.8,0,0)),C.hull)
+  -- Spokes, and one hi-vis mark. Same lesson the truck wheels taught: a
+  -- turning cylinder is indistinguishable from a still one, and this reel
+  -- turning is what the first bore shot is about.
+  for i=1,6 do
+   local a=i/6*math.pi*2
+   part(drum,"FlangeSpoke",V(0.5,8.8,0.42),CF(reelAxle+V(side*4.05,0,0))*A(a,0,0),C.hullDark)
+  end
+  part(drum,"ReelTimingMark",V(0.55,1.6,0.5),CF(reelAxle+V(side*4.1,3.9,0)),C.hiVis)
+ end
+ env.reelSpin=Kit.rigid(drum,CF(reelAxle))
+ -- Skid, bearings and the drive motor the reel is obviously driven BY.
+ part(reel,"ReelSkid",V(11.5,1.2,10.5),CF(reelAxle+V(0,-4,0)),C.hullDark,Enum.Material.DiamondPlate)
+ for _,side in {-1,1} do
+  part(reel,"ReelPedestal",V(1.6,4.4,3),CF(reelAxle+V(side*4.6,-2.2,0)),C.hull)
+  part(reel,"ReelBearing",V(1.9,1.9,1.9),CF(reelAxle+V(side*4.6,0,0)),C.bronze,nil,"ball")
+ end
+ part(reel,"ReelDriveMotor",V(2.4,2.6,3.4),CF(reelAxle+V(-6.4,-1.6,0)),C.metal)
+ cylinder(reel,"ReelDriveShaft",V(2,0.8,0.8),CF(reelAxle+V(-5.3,-1.6,0)),C.bronze)
+ part(reel,"ReelLevelWind",V(9,0.5,0.6),CF(reelAxle+V(0,0.2,5.6)),C.metal)
+ Kit.label(part(reel,"ReelPlate",V(3.2,0.7,0.1),CF(reelAxle+V(0,-3.2,-5.4))*A(0,math.pi,0),C.hullDark),"HOSE  2400 m",C.hiVis)
+
+ -- 4. THE HEATER / PUMP SKID -------------------------------------------------
+ local plant=o+V(-24.5,0,-31)
+ local skid=Kit.model("HeaterPumpSkid",sys)
+ env.pumpSkid=skid
+ part(skid,"SkidBase",V(11,1,7.5),CF(plant+V(0,0.5,0)),C.hullDark,Enum.Material.DiamondPlate)
+ part(skid,"PlantHousing",V(10,5,6.6),CF(plant+V(0,3.5,0)),C.hull)
+ part(skid,"PlantRoof",V(10.4,0.4,7),CF(plant+V(0,6.2,0)),C.hullDark)
+ part(skid,"PlantRoofSnow",V(9,0.4,6),CF(plant+V(0,6.5,0)),C.snow,Enum.Material.Snow,"ball")
+ part(skid,"HiVisStripe",V(10.1,0.5,6.7),CF(plant+V(0,1.6,0)),C.hiVis)
+ -- Louvres and a burner flue: the two details that say "this thing is
+ -- combusting something", which is what makes the steam legible.
+ for i=1,9 do
+  part(skid,"BurnerLouver",V(0.1,3,0.5),CF(plant+V(-4+i*0.8,3.6,-3.35)),C.dark)
+ end
+ cylinder(skid,"BurnerFlue",V(4.6,1.1,1.1),CF(plant+V(3.4,8.4,-1.2)),C.metal,"y")
+ part(skid,"FlueCap",V(1.6,0.3,1.6),CF(plant+V(3.4,10.8,-1.2)),C.hullDark)
+ local plume=part(skid,"FluePlume",V(1.6,1.6,1.6),CF(plant+V(3.4,11.6,-1.2)),C.snow,nil,nil,1)
+ env.plantSteam=Kit.dust(plume,10,Color3.fromRGB(214,222,228),5)
+ env.plantSteam.Acceleration=V(3,6,1)
+ env.plantSteam.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,0.5),NumberSequenceKeypoint.new(1,4.5)})
+ -- Manifold: four pipes and three valve wheels on the face the camera sees.
+ for i=1,4 do
+  cylinder(skid,"ManifoldPipe",V(9.4,0.55,0.55),CF(plant+V(0,1.9+i*0.8,3.6)),C.bronzeDark,"z")
+ end
+ for i=1,3 do
+  local wheelAt=plant+V(-3+i*3,4.3,3.9)
+  cylinder(skid,"ValveWheel",V(0.3,1.5,1.5),CF(wheelAt),C.hiVis,"z")
+  for s=1,4 do
+   part(skid,"ValveSpoke",V(0.16,1.4,0.16),CF(wheelAt)*A(0,0,s*math.pi/4),C.hullDark)
+  end
+ end
+ part(skid,"PlantAccessDeck",V(11.5,0.25,2.2),CF(plant+V(0,1.1,4.8)),C.metal,Enum.Material.DiamondPlate)
+ Kit.label(part(skid,"PlantPlate",V(5,0.9,0.12),CF(plant+V(-2,5.4,3.35))*A(0,math.pi,0),C.hullDark),"HOT WATER PLANT / 2",C.hiVis)
+
+ -- 5. POWER AND FUEL ---------------------------------------------------------
+ local bank=o+V(-24.5,0,-18)
+ local power=Kit.model("PowerAndFuelBank",sys)
+ env.powerBank=power
+ part(power,"GeneratorSkid",V(9,1,6.6),CF(bank+V(0,0.5,0)),C.hullDark,Enum.Material.DiamondPlate)
+ part(power,"GeneratorHousing",V(8.2,4.4,5.8),CF(bank+V(0,3.2,0)),C.hull)
+ part(power,"GeneratorRoof",V(8.6,0.35,6.2),CF(bank+V(0,5.6,0)),C.hullDark)
+ for i=1,11 do
+  part(power,"RadiatorFin",V(0.09,2.8,0.45),CF(bank+V(-3.6+i*0.62,3.3,3)),C.dark)
+ end
+ cylinder(power,"GeneratorExhaust",V(3,0.7,0.7),CF(bank+V(-3,7.2,-1.6)),C.dark,"y")
+ for i=1,3 do
+  cylinder(power,"FuelDrum",V(3.2,2.2,2.2),CF(bank+V(5.4,1.6,-2.6+i*2.4)),C.hiVis,"y")
+ end
+ part(power,"FuelBund",V(4.4,0.35,8),CF(bank+V(5.4,0.2,0)),C.hullDark,Enum.Material.DiamondPlate)
+ Kit.label(part(power,"PowerPlate",V(4.2,0.8,0.12),CF(bank+V(0,4.6,3.05))*A(0,math.pi,0),C.hullDark),"SITE POWER / 1",C.hiVis)
+
+ -- 6. THE OPERATOR CONSOLE ---------------------------------------------------
+ -- Placed so the operator stands with their back to camera-left and the bore
+ -- beyond the screen: one camera position can hold the panel AND the tower,
+ -- which is what stops the telemetry insert reading as a floating UI card.
+ local consoleAt=o+V(8.6,0,-21)
+ local consoleCF=CFrame.lookAt(V(consoleAt.X,consoleAt.Y,consoleAt.Z),V(bore.X,consoleAt.Y,bore.Z))
+ env.boreConsoleCF=consoleCF
+ local console=Kit.model("BoreControlConsole",sys)
+ env.boreConsoleModel=console
+ part(console,"ConsolePlinth",V(5,2.4,2.4),consoleCF*CF(0,1.2,0),C.hullDark)
+ part(console,"ConsoleDesk",V(5.2,0.3,2.8),consoleCF*CF(0,2.5,0.1),C.metal,Enum.Material.DiamondPlate)
+ part(console,"ConsoleKick",V(5.2,0.3,2.6),consoleCF*CF(0,0.15,0),C.dark)
+ -- The screen faces the operator's side of the desk (the console's own +Z),
+ -- pitched up 22 degrees toward a standing reader.
+ local screenCF=consoleCF*CF(0,3.5,0.72)*A(0,math.pi,0)*A(math.rad(22),0,0)
+ env.boreScreen=part(console,"BoreTelemetryPanel",V(3.7,2.8,0.14),screenCF,Color3.fromRGB(11,13,16),Enum.Material.SmoothPlastic)
+ part(console,"ScreenBezel",V(4.1,3.2,0.12),screenCF*CF(0,0,0.1),C.hullDark)
+ part(console,"ScreenHood",V(4.1,0.3,1),screenCF*CF(0,1.7,-0.4)*A(math.rad(-30),0,0),C.hullDark)
+ for _,side in {-1,1} do
+  part(console,"ScreenHoodCheek",V(0.24,1.5,1),screenCF*CF(side*1.95,0.8,-0.35),C.hullDark)
+  part(console,"ScreenStanchion",V(0.28,1.3,0.28),consoleCF*CF(side*1.7,2.9,0.55),C.metal)
+ end
+ part(console,"ConsoleKeyboard",V(2.6,0.1,1),consoleCF*CF(-0.8,2.68,0.9),C.dark)
+ for i=1,6 do
+  part(console,"ToggleGuard",V(0.34,0.24,0.34),consoleCF*CF(1.1+((i-1)%3)*0.5,2.72,0.6+math.floor((i-1)/3)*0.5),C.hiVis)
+ end
+ cylinder(console,"EmergencyStop",V(0.3,0.9,0.9),consoleCF*CF(2.1,2.78,1),Color3.fromRGB(176,48,38),"y")
+ part(console,"ConsoleCanopy",V(6,0.2,3.6),consoleCF*CF(0,5.6,0.2),C.hiVis)
+ for _,side in {-1,1} do
+  Kit.beam(console,"CanopyPost",(consoleCF*CF(side*2.7,0,-1.2)).Position,(consoleCF*CF(side*2.7,5.5,-1.2)).Position,0.16,C.metal)
+ end
+ -- The one warm practical over the desk, aimed down at it. Everything else out
+ -- here is site floodlighting; this is the light the operator works by.
+ local task=part(console,"ConsoleTaskLamp",V(1.4,0.22,0.5),consoleCF*CF(0,5.3,0.3),C.warm,Enum.Material.Neon,nil,0.25)
+ task.CastShadow=false
+ local taskBeam=Instance.new("SpotLight")
+ taskBeam.Face=Enum.NormalId.Bottom;taskBeam.Angle=72;taskBeam.Range=11;taskBeam.Brightness=1.1;taskBeam.Color=C.warm
+ taskBeam.Parent=task
+ env.boreDisplay=Instrumentation.boreConsole(env.boreScreen,Enum.NormalId.Front)
+
+ -- 7. HOSE AND CABLE RUNS ----------------------------------------------------
+ -- What actually makes five boxes read as one machine. The supply hose is
+ -- drawn as a real catenary from the reel, over the crown, down the tower.
+ local function hose(name,a,b,sag,width,color)
+  local previous=a
+  for i=1,10 do
+   local t=i/10
+   local nextPoint=a:Lerp(b,t)-V(0,math.sin(t*math.pi)*sag,0)
+   Kit.beam(sys,name,previous,nextPoint,width,color or C.dark)
+   previous=nextPoint
+  end
+ end
+ hose("SupplyHose",reelAxle+V(0,4.2,-2.6),bore+V(-0.75,BORE_TOWER_TOP+2.4,0),1.6,0.44)
+ hose("BoreFeedHose",bore+V(0.75,BORE_TOWER_TOP+2.4,0),bore+V(0,1.2,0),0.4,0.44)
+ hose("PlantToReelHose",plant+V(4.6,2.6,2),reelAxle+V(-4.2,-3.4,2.4),1,0.42,C.bronzeDark)
+ cable(sys,bank+V(4,1.4,-3.2),plant+V(-4,1.6,-2),0.8)
+ cable(sys,bank+V(4,1.2,2.6),(consoleCF*CF(-2.4,0.4,-0.6)).Position,1.4)
+ cable(sys,(consoleCF*CF(0,0.3,-1.3)).Position,bore+V(2.4,0.4,2.4),0.7)
+ cable(sys,plant+V(4.2,1.2,3),bore+V(-2.6,0.5,1.8),1.1)
+ -- Cable protectors where a run crosses the working area, so the runs read as
+ -- laid rather than dropped.
+ for i=1,4 do
+  part(sys,"CableRamp",V(2.6,0.28,1),CF(o+V(-16+i*4.4,0.24,-25)),C.hiVis,Enum.Material.SmoothPlastic,"wedge")
+ end
+
+ -- 8. WORK LIGHTING ----------------------------------------------------------
+ -- Deliberately SpotLights built directly rather than through Kit.light: they
+ -- are directional (which is what a work light is), and they do not spend the
+ -- scene's shared PointLight budget, which the abandoned facility still needs.
+ for _,spec in {{at=V(0,14,3.2),look=BORE,host=tower},{at=V(-12.5,9.4,-28.6),look=V(-12.5,0,-23.5),host=reel}} do
+  part(spec.host,"WorkLampHead",V(1.5,0.7,0.9),CFrame.lookAt(o+spec.at,o+spec.look),C.hullDark)
+  local lens=part(spec.host,"WorkLampLens",V(1.2,0.5,0.1),CFrame.lookAt(o+spec.at,o+spec.look)*CF(0,0,-0.5),C.warm,Enum.Material.Neon,nil,0.2)
+  lens.CastShadow=false
+  local beam=Instance.new("SpotLight")
+  beam.Face=Enum.NormalId.Front;beam.Angle=68;beam.Range=34;beam.Brightness=1.5;beam.Color=C.warm
+  beam.Parent=lens
+  part(spec.host,"WorkLampArm",V(0.2,1.2,0.2),CF(o+spec.at+V(0,0.8,0)),C.metal)
+ end
+
+ -- 9. SNOW THAT ARRIVES DURING THE MONTAGE ------------------------------------
+ -- Built invisible and grown by Env.setBoreWeathering. Depth numbers climbing
+ -- on a screen is a caption; snow visibly banked up against equipment that was
+ -- clear an hour ago is the passage of time happening in the frame.
+ env.boreSnowCaps={}
+ for _,spec in {
+  {at=V(0,0.35,-24.4),size=V(8,0.7,3.4)},
+  {at=V(-12.5,9.3,-23.5),size=V(8,0.8,7)},
+  {at=V(-24.5,6.6,-31),size=V(9,0.7,6)},
+  {at=V(-24.5,6,-18),size=V(8,0.7,5.4)},
+  {at=V(8.6,5.8,-21),size=V(5.6,0.6,3.4)},
+  {at=V(-8,0.5,-30),size=V(6,1,4)},
+ } do
+  local cap=part(sys,"AccumulatedSnow",spec.size,CF(o+spec.at),C.snow,Enum.Material.Snow,"ball",1)
+  cap.CanQuery=false
+  table.insert(env.boreSnowCaps,{part=cap,size=spec.size})
+ end
+
+ -- 10. SITE CLUTTER ----------------------------------------------------------
+ -- Enough that the plant reads as somewhere people have been working for days.
+ crate(sys,CF(o+V(-6,1.4,-19)),V(2.8,2.4,2.8))
+ crate(sys,CF(o+V(-3.4,1.4,-17.4)),V(2.2,2,2.2))
+ part(sys,"HoseSpoolSpare",V(3.4,1.6,3.4),CF(o+V(-18,0.8,-25)),C.dark,Enum.Material.SmoothPlastic)
+ for i=1,3 do
+  part(sys,"CoreSampleTube",V(0.5,0.5,5),CF(o+V(4.5+i*0.8,0.3,-17))*A(0,0.1*i,0),C.hullDark)
+ end
+ part(sys,"SampleRack",V(4,0.6,5.4),CF(o+V(5.6,0.2,-17)),C.metal,Enum.Material.DiamondPlate)
+ for _,at in {V(-8,0,-31),V(6,0,-32)} do
+  part(sys,"SafetyBarrier",V(5,1.4,0.24),CF(o+at),C.hiVis)
+  for _,side in {-1,1} do
+   part(sys,"BarrierFoot",V(0.5,0.3,1.4),CF(o+at+V(side*2.2,-0.55,0)),C.dark)
+  end
+ end
+end
+
 -- Two slopes meet at a shared crest, with their lower faces buried in the
 -- substrate. Unlike superimposed wedges this has no vertical end at the crest.
 local function snowRidge(parent,cf,width,height,length)
@@ -2289,9 +3649,11 @@ local function exterior(env,rng)
  end
  Kit.beam(root,"ShoringLintel",o+V(-10,22,-42),o+V(10,22,-42),1,C.metal)
  lamp(root,CF(o+V(0,18,-43)),C.warm,40,2)
- for i=1,4 do
-  Kit.beam(root,"ExposedAncientEdge",o+V(32+i*3,10,-32),o+V(32+i*3,52,-32),0.4,C.gold)
- end
+ -- The four gold "ExposedAncientEdge" columns that used to stand here are
+ -- gone. They put ancient structure in plain sight on the surface, in the
+ -- establishing shots, before anybody had drilled anything - which is exactly
+ -- the reveal this whole sequence now exists to earn. Nothing artificial is
+ -- visible anywhere on the Arctic set until the bore finds it.
  local sea=part(root,"OceanLead",V(120,1,210),CF(o+V(-200,-0.3,70)),C.deep,Enum.Material.Glass)
  for i=1,22 do part(root,"BrokenFloe",V(rng:NextNumber(5,22),1.5,rng:NextNumber(8,25)),sea.CFrame*CF(rng:NextNumber(-52,52),1,rng:NextNumber(-94,94))*A(0,i,0),C.snow,Enum.Material.Ice,"wedge") end
  for _,pos in {V(-65,6,10),V(45,8,80),V(-30,22,-40)} do
@@ -2343,13 +3705,15 @@ local function exterior(env,rng)
   part(root,"FloodlightLens",V(1.3,0.5,0.1),head.CFrame*CF(0,0,-0.55),C.warm,Enum.Material.Neon,nil,0.2)
  end
  local kinds={"PersonnelTransport","EquipmentCarrier","HeavyDrill","SnowUtility","EvacuationTransport"}
- -- 1 and 2 are the arriving convoy (moved by the shots); 3 is the drill rig at
--- the excavation; 4 and 5 are parked on the apron in marked bays, angled off
--- the route so the approach corridor stays visually clear.
+ -- 1 and 2 are the arriving convoy (moved by the shots); 3 is the rig truck,
+-- moved off the bore centreline to x=15 so the bore plant itself occupies the
+-- working area and the tower stands alone over the hole; 4 and 5 are parked on
+-- the apron in marked bays, angled off the route so the approach corridor
+-- stays visually clear.
  local placements={
   {at=V(0,1.6,150),yaw=0},
   {at=V(0,1.6,178),yaw=0},
-  {at=V(0,1.6,-23),yaw=0},
+  {at=V(15,1.6,-25),yaw=math.rad(-8)},
   {at=V(-10.5,1.6,22),yaw=0},
   {at=V(16,1.6,22),yaw=math.rad(96)},
  }
@@ -2357,28 +3721,14 @@ local function exterior(env,rng)
   local placement=placements[i]
   table.insert(env.vehicles,vehicle(root,CF(o+placement.at)*A(0,placement.yaw,0),kind,i))
  end
- local drill=env.vehicles[3].model
- for _,x in {-2.8,2.8} do
-  Kit.beam(drill,"HydraulicMast",o+V(x,2,-22),o+V(x,15,-28),0.65,C.orange)
-  Kit.beam(drill,"Piston",o+V(x,3,-18),o+V(x,12,-27),0.3,C.ivory)
+ -- The rig truck is now a support vehicle parked beside the bore rather than
+ -- the drill itself: its deck carries spare hose and its outriggers are down,
+ -- which is what a vehicle that has been stationary for days looks like.
+ local rigTruck=env.vehicles[3].model
+ for i=1,3 do
+  cylinder(rigTruck,"SpareHoseCoil",V(1.4,4.6,4.6),CF(o+V(15,4.2,-27+i*1.6)),C.dark)
  end
- env.drill=Kit.model("RotatingAuger",root)
- cylinder(env.drill,"DriveShaft",V(12,0.8,0.8),CF(o+V(0,8,-28)),C.metal,"y")
- for i=1,18 do
-  local t=i*0.8
-  part(env.drill,"HelicalCuttingTooth",V(1.4,0.28,0.8),CF(o+V(math.cos(t)*0.75,2+i*0.62,-28+math.sin(t)*0.75))*A(0,-t,0.25),C.ivory)
- end
- -- Same again, and it matters more here: 07a_DrillRotates spins this model
- -- every frame. Without a pivot on the auger's own axis the rotation is
- -- about whatever the engine picks - at worst the world origin, which swings
- -- the whole auger around a 28-stud circle instead of turning it in place.
- env.drill.WorldPivot=CF(o+V(0,8,-28))
- env.drillBase=env.drill:GetPivot()
- local chip=part(root,"DrillContact",V(1,1,1),CF(o+V(0,1,-28)),C.ice,nil,nil,1)
- env.drillDust=Kit.dust(chip,0,C.snow,8)
- for i=1,10 do
-  Kit.beam(root,"FracturedIce",o+V(0,0.4,-28),o+V(math.sin(i)*7,0.4,-28+math.cos(i)*7),0.08,C.deep)
- end
+ boreSystem(env,root,o)
 end
 --------------------------------------------------------------------------------
 -- THE COMMAND ROOM
@@ -2619,43 +3969,778 @@ local function commandRoom(env,rng)
  Kit.light(fillHost,Color3.fromRGB(150,162,180),30,0.5)
 end
 
+--------------------------------------------------------------------------------
+-- THE OPEN CUT
+--
+-- What the expedition does AFTER the bore drops into a void: widen the
+-- shallow section until the thing under the ice is standing in daylight.
+--
+-- This is a stepped excavation, not a hole. Three benches per side, each one
+-- set in from the last, because that is how you dig a deep pit in a material
+-- that will otherwise shear - and because a straight-sided shaft gives the
+-- camera no scale at all, whereas benches give it a staircase of known steps
+-- to read the depth against.
+--
+-- The point of the shot it exists for is the CONTRAST: cut ice above, and a
+-- flat black composite roof at the bottom of it with bronze conduit running
+-- out of the walls. Nothing about that roof is geological, and the audience
+-- should be able to see that from the rim without being told.
+--
+-- It is its own stage (Zones.Excavation) rather than a pit dug into the
+-- Arctic set: see the note on that zone.
+--------------------------------------------------------------------------------
+
+local function excavation(env,rng)
+ local x=Env.Zones.Excavation
+ local pit=Kit.folder("OpenCut",env.folder)
+ env.excavation=pit
+ local BENCHES={{inner=23,top=0,bottom=-8},{inner=18,top=-8,bottom=-16},{inner=13,top=-16,bottom=-24}}
+ local ROOF_Y=-25
+
+ -- Surrounding ice mass, built as four walls rather than one block with a
+ -- hole in it: the walls ARE the cut faces, so there is no solid slab for a
+ -- camera looking in to have to shoot through.
+ for _,bench in BENCHES do
+  local height=bench.top-bench.bottom
+  local midY=(bench.top+bench.bottom)/2
+  for _,side in {-1,1} do
+   part(pit,"CutIceFace",V(6,height,bench.inner*2+12),CF(x+V(side*(bench.inner+3),midY,0)),C.ice,Enum.Material.Ice)
+   part(pit,"CutIceFace",V(bench.inner*2+12,height,6),CF(x+V(0,midY,side*(bench.inner+3))),C.ice,Enum.Material.Ice)
+  end
+  -- The bench floor itself: a walkable ledge of cut ice, scored by the saw.
+  for _,side in {-1,1} do
+   part(pit,"BenchFloor",V(5,0.6,bench.inner*2+10),CF(x+V(side*(bench.inner+2.5),bench.top-0.3,0)),C.ice:Lerp(C.snow,0.4),Enum.Material.Ice)
+   part(pit,"BenchFloor",V(bench.inner*2+10,0.6,5),CF(x+V(0,bench.top-0.3,side*(bench.inner+2.5))),C.ice:Lerp(C.snow,0.4),Enum.Material.Ice)
+  end
+ end
+ -- Saw scoring on the upper faces. Vertical kerfs at an irregular pitch read
+ -- as machine-cut ice; an unbroken blue wall reads as a swimming pool.
+ -- Occasional saw marks, not hatching. At twenty-six a side these read as
+ -- corduroy from the establishing distance the shot is actually taken at;
+ -- nine, unevenly spaced and half the depth, read as a cut face.
+ for i=1,9 do
+  local along=-20+i*4.6+rng:NextNumber(-1.6,1.6)
+  for _,side in {-1,1} do
+   part(pit,"SawKerf",V(0.16,6.6,0.22),CF(x+V(side*22.94,-4.2,along)),C.deep,Enum.Material.Ice)
+   part(pit,"SawKerf",V(0.22,6.6,0.16),CF(x+V(along,-4.2,side*22.94)),C.deep,Enum.Material.Ice)
+  end
+ end
+ -- Rim: a snow lip, spoil piles from the cut, and stacked blocks that were
+ -- lifted out. Evidence, not decoration - this is where the ice went.
+ for _,side in {-1,1} do
+  part(pit,"RimLip",V(7,2.4,60),CF(x+V(side*29,0.4,0)),C.snow,Enum.Material.Snow)
+  part(pit,"RimLip",V(60,2.4,7),CF(x+V(0,0.4,side*29)),C.snow,Enum.Material.Snow)
+  snowRidge(pit,CF(x+V(side*40,0.6,10))*A(0,math.pi/2,0),13,2.6,26)
+ end
+ for i=1,9 do
+  part(pit,"CutIceBlock",V(4.4,2.6,4.4),CF(x+V(-36+((i-1)%3)*5,2+math.floor((i-1)/3)*2.7,20+((i-1)%3)*1.2))*A(0,rng:NextNumber(-0.2,0.2),0),C.ice,Enum.Material.Ice)
+ end
+
+ -- THE EXPOSED STRUCTURE. Flat, dark, ribbed and unmistakably manufactured,
+ -- with ice still frozen onto its edges where the cut stopped.
+ local roof=Kit.model("BuriedAccessStructure",pit)
+ env.accessStructure=roof
+ --[[
+  FOUR SLABS AROUND A REAL HOLE, never one slab with a hatch drawn on it.
+
+  As a solid 26-stud plate the roof contained the hatch throat, so the shot
+  that looks down the shaft had its focal point inside the floor - and every
+  frame of that descent was quietly relocated by the camera's own unstick
+  fallback. A hatch has to be an absence.
+ ]]
+ local HATCH_HALF=5.6
+ for _,side in {-1,1} do
+  part(roof,"CompositeRoof",V(13-HATCH_HALF,2,26),CF(x+V(side*(13+HATCH_HALF)/2,ROOF_Y,0)),C.facComposite,Enum.Material.Slate)
+  part(roof,"CompositeRoof",V(HATCH_HALF*2,2,13-HATCH_HALF),CF(x+V(0,ROOF_Y,side*(13+HATCH_HALF)/2)),C.facComposite,Enum.Material.Slate)
+ end
+ -- Two pieces per rib, one either side of the hatch. A single 25-stud rib
+ -- runs straight across the opening, which is both wrong (a hatch has a
+ -- frame, not a beam through it) and opaque to the shot that looks down into
+ -- the shaft.
+ for i=1,7 do
+  for _,side in {-1,1} do
+   part(roof,"RoofRib",V(6.8,0.5,0.9),CF(x+V(side*9.4,ROOF_Y+1.2,-11+(i-1)*3.6)),C.facMetal)
+  end
+ end
+ for _,side in {-1,1} do
+  part(roof,"RoofEdgeArmour",V(1.6,1.3,26),CF(x+V(side*12.6,ROOF_Y+1,0)),C.facIvory)
+  part(roof,"RoofEdgeArmour",V(26,1.3,1.6),CF(x+V(0,ROOF_Y+1,side*12.6)),C.facIvory)
+  -- Ice still gripping the edges: the cut reached the roof and stopped.
+  part(roof,"ClingingIce",V(5,3.4,26),CF(x+V(side*14.4,ROOF_Y+1.6,0))*A(0,0,side*0.2),C.ice,Enum.Material.Ice,"wedge",0.1)
+ end
+ -- Conduit running out of the structure and INTO the ice, which is the detail
+ -- that says this continues past what has been dug out.
+ for _,offset in {-7.5,7.5} do
+  -- Default axis: the run is along world X, crossing the roof and vanishing
+  -- into the ice wall at each end. Passing "z" ran it along Z instead, which
+  -- put a conduit straight through the access hatch.
+  cylinder(roof,"EmbeddedConduit",V(30,1.1,1.1),CF(x+V(0,ROOF_Y+1.5,offset)),C.bronzeDark)
+  for i=1,5 do
+   part(roof,"ConduitClamp",V(1.6,1.5,0.7),CF(x+V(-10+(i-1)*5,ROOF_Y+1.5,offset)),C.facMetal)
+  end
+ end
+ -- One faint glyph band, still dead. The first ancient writing in the film,
+ -- and it is almost buried in frost - a mark the audience will see again on
+ -- the key, on the gate and on Aegis Zero's chest.
+ env.roofGlyphs=Glyph.band(roof,Glyph.Phrases.SealAuthority,
+  CF(x+V(0,ROOF_Y+1.1,9.5))*A(-math.pi/2,0,0),0.95,3,C.bronzeDark,{emissive=false})
+ for i=1,14 do
+  -- Pushed outside the hatch collar: frost drawn over the opening is frost
+  -- floating in mid-air over a shaft.
+  local side=i%2==0 and 1 or -1
+  part(roof,"SurfaceFrost",V(rng:NextNumber(1.6,4.2),0.12,rng:NextNumber(1.6,4.2)),
+   CF(x+V(side*rng:NextNumber(6.5,11.5),ROOF_Y+1.1,rng:NextNumber(-11,11))),C.frost,Enum.Material.Ice,nil,0.35)
+ end
+
+ -- THE ACCESS HATCH. A recessed collar, the cover lifted out and standing on
+ -- edge beside it, and a black throat: the way in.
+ local hatch=Kit.model("AccessHatch",roof)
+ env.accessHatch=hatch
+ for i=1,10 do
+  local a=i/10*math.pi*2
+  part(hatch,"HatchCollar",V(2.6,1.1,1.5),CF(x+V(math.sin(a)*4.4,ROOF_Y+1.5,math.cos(a)*4.4))*A(0,a,0),C.facMetal)
+ end
+ env.hatchThroat=part(hatch,"HatchThroat",V(7,0.4,7),CF(x+V(0,ROOF_Y+0.9,0)),Color3.fromRGB(6,7,9),Enum.Material.SmoothPlastic)
+ part(hatch,"ShaftLining",V(8.4,10,0.5),CF(x+V(0,ROOF_Y-5,-4.2)),C.facMetal)
+ part(hatch,"ShaftLining",V(8.4,10,0.5),CF(x+V(0,ROOF_Y-5,4.2)),C.facMetal)
+ part(hatch,"LiftedHatchCover",V(7.4,0.8,7.4),CF(x+V(9.5,ROOF_Y+4.2,0))*A(0,0,math.rad(76)),C.facMetal,Enum.Material.DiamondPlate)
+ env.hatchGlyph=Glyph.render(hatch,"Gate",CF(x+V(9.1,ROOF_Y+4.2,0))*A(0,-math.pi/2,0)*A(0,0,math.rad(-14)),0.9,C.bronzeDark,{emissive=false})
+ -- The expedition's own way down it: a bolted ladder and a tripod hoist.
+ for rung=1,11 do
+  Kit.beam(hatch,"DescentLadderRung",x+V(-0.8,ROOF_Y-rung*0.9,3.6),x+V(0.8,ROOF_Y-rung*0.9,3.6),0.1,C.hiVis)
+ end
+ for _,side in {-1,1} do
+  Kit.beam(hatch,"DescentLadderStile",x+V(side*0.9,ROOF_Y+2,3.6),x+V(side*0.9,ROOF_Y-10,3.6),0.12,C.hiVis)
+ end
+ local hoist=Kit.model("TripodHoist",roof)
+ for i=0,2 do
+  local a=i*2.1
+  Kit.beam(hoist,"HoistLeg",x+V(math.sin(a)*5,ROOF_Y+1.2,math.cos(a)*5),x+V(0,ROOF_Y+9,0),0.28,C.hiVis)
+ end
+ part(hoist,"HoistHead",V(1.6,0.9,1.6),CF(x+V(0,ROOF_Y+9.3,0)),C.hullDark)
+ Kit.beam(hoist,"HoistLine",x+V(0,ROOF_Y+9,0),x+V(0,ROOF_Y+3.6,0),0.09,C.dark)
+ part(hoist,"HoistHook",V(0.5,0.9,0.5),CF(x+V(0,ROOF_Y+3.2,0)),C.metal)
+
+ -- SCAFFOLD. Down the -X side, four landings and three stair flights, which
+ -- is the object that makes the depth of the cut legible in a wide shot.
+ local scaffold=Kit.model("ExcavationScaffold",pit)
+ env.scaffold=scaffold
+ local LANDINGS={-3.5,-10.5,-17.5,ROOF_Y+1.6}
+ for index,y in LANDINGS do
+  local inset=if index<=3 then BENCHES[index].inner-1.5 else 11
+  part(scaffold,"ScaffoldLanding",V(7,0.3,9),CF(x+V(-inset+3,y,0)),C.metal,Enum.Material.DiamondPlate)
+  for _,side in {-1,1} do
+   Kit.beam(scaffold,"LandingRail",x+V(-inset+0.2,y+1.2,side*4.4),x+V(-inset+6.2,y+1.2,side*4.4),0.11,C.hiVis)
+  end
+  if index<#LANDINGS then
+   local nextY=LANDINGS[index+1]
+   local nextInset=if index+1<=3 then BENCHES[index+1].inner-1.5 else 11
+   local flight=(index%2==0) and 1 or -1
+   local a=x+V(-inset+3,y,flight*4.2)
+   local b=x+V(-nextInset+3,nextY,flight*4.2)
+   Kit.beam(scaffold,"StairStringer",a,b,0.5,C.metal)
+   local steps=math.max(4,math.floor((y-nextY)/1.1))
+   for s=1,steps do
+    local t=s/(steps+1)
+    part(scaffold,"StairTread",V(3.4,0.18,1),CF(a:Lerp(b,t)),C.metal,Enum.Material.DiamondPlate)
+   end
+   Kit.beam(scaffold,"StairRail",a+V(0,1.3,0),b+V(0,1.3,0),0.1,C.hiVis)
+  end
+  Kit.beam(scaffold,"ScaffoldUpright",x+V(-inset+0.4,y,4.6),x+V(-inset+0.4,y+2.6,4.6),0.2,C.metal)
+ end
+
+ -- Work lighting: three masts on the rim aimed down into the cut, two
+ -- portables on the structure itself. All warm, all obviously brought here -
+ -- the contrast with the facility's own cold fixtures starts on this shot.
+ for _,spec in {{at=V(-26,9,-16),look=V(-6,-22,-4)},{at=V(26,9,-16),look=V(6,-22,-4)},{at=V(0,9,27),look=V(0,-22,4)}} do
+  local base=x+V(spec.at.X,0.8,spec.at.Z)
+  Kit.beam(pit,"RimLampMast",base,base+V(0,spec.at.Y,0),0.3,C.metal)
+  part(pit,"RimLampHead",V(1.8,0.8,1.1),CFrame.lookAt(x+spec.at,x+spec.look),C.hullDark)
+  local lens=part(pit,"RimLampLens",V(1.5,0.6,0.12),CFrame.lookAt(x+spec.at,x+spec.look)*CF(0,0,-0.6),C.warm,Enum.Material.Neon,nil,0.2)
+  lens.CastShadow=false
+  local beam=Instance.new("SpotLight")
+  beam.Face=Enum.NormalId.Front;beam.Angle=58;beam.Range=52;beam.Brightness=1.8;beam.Color=C.warm
+  beam.Parent=lens
+  cable(pit,base+V(0,0.6,0),x+V(spec.at.X*0.6,1,spec.at.Z*1.2),1.2)
+ end
+ for _,at in {V(-8,0,8),V(8,0,-9)} do
+  local mast=Kit.model("PortableWorkLamp",pit)
+  for i=0,2 do
+   part(mast,"TripodLeg",V(0.22,4.2,0.22),CF(x+at+V(math.sin(i*2.1)*0.85,ROOF_Y+3.1,math.cos(i*2.1)*0.85))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal)
+  end
+  local lens=part(mast,"LampLens",V(1.5,0.85,0.12),CF(x+at+V(0,ROOF_Y+5.4,-0.55)),C.warm,Enum.Material.Neon,nil,0.28)
+  lens.CastShadow=false
+  local beam=Instance.new("SpotLight")
+  beam.Face=Enum.NormalId.Front;beam.Angle=92;beam.Range=24;beam.Brightness=1.1;beam.Color=Color3.fromRGB(255,226,186)
+  beam.Parent=lens
+  part(mast,"LampBody",V(1.9,1.1,0.9),CF(x+at+V(0,ROOF_Y+5.4,0)),C.metal,Enum.Material.DiamondPlate)
+ end
+
+ -- The expedition's power and survey kit on the structure: the cable that
+ -- later reaches Aegis Zero's chest physically starts here.
+ local station=Kit.model("ShaftHeadStation",pit)
+ part(station,"GeneratorSkid",V(6,3.2,4),CF(x+V(-9,ROOF_Y+3.6,-8)),C.hull)
+ part(station,"GeneratorRoof",V(6.4,0.3,4.4),CF(x+V(-9,ROOF_Y+5.3,-8)),C.hullDark)
+ Kit.label(part(station,"StationPlate",V(3.4,0.7,0.1),CF(x+V(-9,ROOF_Y+4.4,-5.95))*A(0,math.pi,0),C.hullDark),"SHAFT HEAD / POWER",C.hiVis)
+ cylinder(station,"CableDrum",V(2.2,3,3),CF(x+V(-9,ROOF_Y+3.5,-3.4)),C.dark)
+ cable(station,x+V(-9,ROOF_Y+3.4,-2),x+V(0,ROOF_Y+1.4,2.6),0.6)
+ crate(station,CF(x+V(6,ROOF_Y+3.2,7)),V(2.8,2.4,2.8))
+ crate(station,CF(x+V(9,ROOF_Y+3,9)),V(2.2,2,2.2))
+ part(station,"FieldTable",V(4,0.2,2.2),CF(x+V(6.5,ROOF_Y+4.2,4)),C.metal,Enum.Material.DiamondPlate)
+ for _,side in {-1,1} do
+  part(station,"TableLeg",V(0.2,2.8,0.2),CF(x+V(6.5+side*1.7,ROOF_Y+2.7,4)),C.metal)
+ end
+ -- A tarp shelter over the rim station, so the top of the cut is not empty.
+ part(pit,"RimShelterRoof",V(9,0.2,7),CF(x+V(-24,4.6,12))*A(0.1,0,0),C.hiVis,Enum.Material.Fabric)
+ for _,corner in {V(-28,0,9),V(-20,0,9),V(-28,0,15),V(-20,0,15)} do
+  Kit.beam(pit,"ShelterPost",x+corner+V(0,1,0),x+corner+V(0,4.6,0),0.14,C.metal)
+ end
+ -- Falling spindrift down the cut: the Arctic is still happening above them.
+ local drift=part(pit,"CutSpindrift",V(40,2,40),CF(x+V(0,-2,0)),C.snow,nil,nil,1)
+ local mist=Kit.dust(drift,22,C.snow,3)
+ mist.Acceleration=V(1,-7,0)
+ mist.Size=NumberSequence.new(0.3)
+ table.insert(env.weather,mist)
+end
+
 local function interiors(env,rng)
  commandRoom(env,rng)
+ -- Its own seeded stream, deliberately: sharing `rng` would shift every draw
+ -- downstream of it (the chamber reliefs, the prison army's jitter) simply by
+ -- existing, and this file's layout determinism is worth more than one
+ -- shared Random.
+ excavation(env,Kit.rng(20260921))
  local d=Env.Zones.Door
- local hall=Kit.folder("AncientEntry",env.folder)
- part(hall,"EntryFloor",V(30,1,70),CF(d+V(0,-0.5,10)),C.deep,Enum.Material.Slate)
- for _,side in {-1,1} do
-  part(hall,"IceWall",V(3,24,70),CF(d+V(side*16,11,10)),C.ice,Enum.Material.Ice,"wedge")
-  for z=-18,38,8 do
-   part(hall,"FlutedPillar",V(2,20,2),CF(d+V(side*12,10,z)),C.ivory,Enum.Material.Marble)
-   for x=-0.6,0.6,0.6 do part(hall,"PillarFlute",V(0.13,18,0.1),CF(d+V(side*12+x,10,z+1.05)),C.gold) end
-   lamp(hall,CF(d+V(side*11,2,z)),C.warm,20,1)
+ --------------------------------------------------------------------------------
+ -- THE ABANDONED FACILITY
+ --
+ -- What used to stand here was a colonnade: fluted marble pillars, ivory
+ -- jambs, gold ribs and sixteen warm lamps. That is a temple, and a temple
+ -- tells the audience the wrong thing twice over - that somebody built this
+ -- to be admired, and that whatever is at the end of it is holy rather than
+ -- contained.
+ --
+ -- This is a WORKING INSTALLATION that stopped working. It is read in that
+ -- order on purpose: first the infrastructure (bulkheads, trenches, racks,
+ -- conduit), then, underneath it, the fact that the infrastructure is not
+ -- human. Dark worn metal and black composite carry the volume; oxidised
+ -- bronze is reserved for mechanisms; the ivory that Aegis Zero is armoured
+ -- in survives only as small plates on the structural edges.
+ --
+ -- ABANDONMENT IS TOLD WITH EVIDENCE, NOT DAMAGE. Breaking everything reads
+ -- as a ruin. One chair pushed back from a dead console, one tool left on a
+ -- work surface, one cabinet standing open, one maintenance panel taken off
+ -- and leaned against its rack, one door jammed halfway, and one emergency
+ -- fixture still alight after all this time - that reads as a place people
+ -- left in a hurry and never came back to.
+ --
+ -- The camera walks it in five rooms, so the inner gate is genuinely DEEP
+ -- inside rather than visible from the way in:
+ --
+ --   z  46..28   entry shaft, where the expedition broke through the ceiling
+ --   z  28..16   airlock, its inner door stopped halfway
+ --   z  16..0    maintenance corridor, conduit trench down the middle
+ --   z   0..-16  operations bay, the dead workstations
+ --   z -16..-36  gate hall, and the containment gate itself
+ --------------------------------------------------------------------------------
+ local fac=Kit.folder("AbandonedFacility",env.folder)
+ env.facility=fac
+ local function fpart(name,size,cf,color,material,shape,transparency)
+  return part(fac,name,size,cf,color,material,shape,transparency)
+ end
+ -- Ancient fixtures are COLD and weak; anything warm in here was carried in
+ -- by the expedition. Keeping the two apart is how the audience reads, shot
+ -- by shot, how much of this room is theirs.
+ local function ancientFixture(at,brightness,range)
+  fpart("EmergencyFixture",V(1.4,0.5,0.5),CF(at),C.facMetal)
+  local lens=fpart("FixtureLens",V(1.1,0.28,0.12),CF(at)*CF(0,-0.2,0),C.ancientEmergency,Enum.Material.Neon,nil,0.25)
+  lens.CastShadow=false
+  Kit.light(lens,C.ancientEmergency,range or 16,brightness or 0.55)
+  return lens
+ end
+ local function expeditionLamp(at,look)
+  local mast=Kit.model("PortableWorkLamp",fac)
+  for i=0,2 do
+   fpart("TripodLeg",V(0.2,4,0.2),CF(at+V(math.sin(i*2.1)*0.8,2,math.cos(i*2.1)*0.8))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal).Parent=mast
+  end
+  local head=CFrame.lookAt(at+V(0,4.6,0),look)
+  local lens=fpart("LampLens",V(1.5,0.85,0.12),head*CF(0,0,-0.5),C.warm,Enum.Material.Neon,nil,0.28)
+  lens.CastShadow=false;lens.Parent=mast
+  local beam=Instance.new("SpotLight")
+  beam.Face=Enum.NormalId.Front;beam.Angle=88;beam.Range=30;beam.Brightness=1.25;beam.Color=Color3.fromRGB(255,228,192)
+  beam.Parent=lens
+  fpart("LampBody",V(1.9,1.1,0.9),head,C.metal,Enum.Material.DiamondPlate).Parent=mast
+  return mast
+ end
+
+ -- SHELL ---------------------------------------------------------------------
+ -- Floor, ceiling and walls in three widths, so the space narrows and widens
+ -- as it goes and never reads as one endless tube.
+ local SEGMENTS={
+  {from=28,to=46,halfWidth=12,ceiling=13},
+  {from=16,to=28,halfWidth=10,ceiling=11},
+  {from=0,to=16,halfWidth=11,ceiling=12},
+  -- Tall on purpose: the gate stands 25 studs to the top of its drive drums,
+  -- and the only place a lens can be far enough back to hold all of it is in
+  -- this room. Against a 14-stud ceiling that camera was above the roof.
+  {from=-16,to=0,halfWidth=17,ceiling=19},
+  {from=-40,to=-16,halfWidth=17,ceiling=26},
+ }
+ for index,seg in SEGMENTS do
+  local depth=seg.to-seg.from
+  local midZ=(seg.from+seg.to)/2
+  fpart("DeckPlate",V(seg.halfWidth*2,1,depth),CF(d+V(0,-0.5,midZ)),C.facSlate,Enum.Material.Slate)
+  fpart("CeilingPlate",V(seg.halfWidth*2,0.8,depth),CF(d+V(0,seg.ceiling+0.4,midZ)),C.facComposite)
+  for _,side in {-1,1} do
+   fpart("BulkheadWall",V(1,seg.ceiling,depth),CF(d+V(side*(seg.halfWidth+0.5),seg.ceiling/2,midZ)),C.facMetal)
+   -- Structural ribs at a regular pitch: rhythm, and something for a hand
+   -- lamp to break across so the wall is never one dead value.
+   for z=seg.from+2,seg.to-1,4 do
+    fpart("WallRib",V(0.55,seg.ceiling-1,0.6),CF(d+V(side*(seg.halfWidth-0.2),seg.ceiling/2,z)),C.facPanel)
+    fpart("RibArmourPlate",V(0.3,1.1,0.7),CF(d+V(side*(seg.halfWidth-0.35),seg.ceiling-2.2,z)),C.facIvory)
+   end
+   -- A low service channel along the base of both walls, capped with bronze.
+   fpart("BaseChannel",V(0.7,1.2,depth),CF(d+V(side*(seg.halfWidth-0.4),0.6,midZ)),C.facComposite)
+   cylinder(fac,"BaseConduit",V(depth-0.5,0.5,0.5),CF(d+V(side*(seg.halfWidth-0.4),1.4,midZ)),C.bronzeDark,"z")
+  end
+  -- Ceiling coffers, with two panels deliberately missing in the corridor.
+  for z=seg.from+2,seg.to-2,3.5 do
+   local dropped=index==3 and (z>7 and z<11)
+   if not dropped then
+    fpart("CeilingCoffer",V(seg.halfWidth*1.7,0.4,2.4),CF(d+V(0,seg.ceiling-0.2,z)),C.facPanel)
+   end
   end
  end
- for _,side in {-1,1} do
-  part(hall,"DoorJamb",V(3,20,2),CF(d+V(side*10,10,0)),C.ivory,Enum.Material.Marble)
- end
- part(hall,"DoorLintel",V(23,3,2),CF(d+V(0,20,0)),C.ivory,Enum.Material.Marble)
- env.door={}
- for _,side in {-1,1} do
-  local leaf=Kit.model(side<0 and "DoorLeft" or "DoorRight",hall)
-  local p=part(leaf,"AncientDoor",V(9.5,18,0.8),CF(d+V(side*4.8,9,0)),C.ivory,Enum.Material.Marble)
-  leaf.PrimaryPart=p
-  for i=1,7 do
-   part(leaf,"InsetGoldRib",V(8.5,0.1,0.2),p.CFrame*CF(0,-7+i*2,0.5),C.gold)
+ -- End caps. Without them the corridor is open at both ends, and a camera
+ -- looking along its axis sees straight out of the set into nothing.
+ fpart("EndBulkhead",V(26,14,1.2),CF(d+V(0,7,46.4)),C.facMetal)
+ fpart("EndBulkheadArmour",V(20,1,1.5),CF(d+V(0,13.4,46.2)),C.facIvory)
+ fpart("GateHallRear",V(38,27,1.2),CF(d+V(0,13.5,-40.4)),C.facComposite)
+ --[[
+  Doorway frames between sections: the reason the five rooms read as rooms
+  rather than as one tube.
+
+  Built as a JAMB-JAMB-LINTEL ring, never as one slab with a hole drawn on
+  it. A solid slab across the opening is opaque to the obstruction ray, so
+  every shot that looks down the corridor through a doorway - which is most
+  of the facility's coverage - reports blocked and gets relocated by
+  Camera.applyShot. The aperture has to be genuinely empty.
+ ]]
+ for _,gap in {{z=28,half=10,height=11},{z=16,half=9,height=10},{z=0,half=10,height=11},{z=-16,half=13,height=17}} do
+  local outer=math.max(gap.half+5,12)
+  for _,side in {-1,1} do
+   fpart("SectionJamb",V(outer-gap.half,gap.height+3,1.6),CF(d+V(side*(gap.half+(outer-gap.half)/2),(gap.height+3)/2,gap.z)),C.facMetal)
+   fpart("FrameArmour",V(0.8,gap.height,1.9),CF(d+V(side*gap.half,gap.height/2,gap.z)),C.facIvory)
   end
-  env.door[side<0 and "left" or "right"]=leaf
-  -- Slid open every frame of 08c_AncientDoorOpens, so it is placed from a
-  -- frozen offset set rather than re-pivoted off its own last position - see
-  -- Kit.rigid, and the truck body, which is the same problem.
-  env.door[side<0 and "slideLeft" or "slideRight"]=Kit.rigid(leaf,CF(d))
-  env.door[side<0 and "leftBase" or "rightBase"]=CF(d)
+  fpart("SectionLintel",V(outer*2,3.4,1.6),CF(d+V(0,gap.height+1.7,gap.z)),C.facMetal)
+  fpart("FrameLintelArmour",V(gap.half*2,0.9,1.9),CF(d+V(0,gap.height,gap.z)),C.facIvory)
+  fpart("FrameSill",V(gap.half*2,0.3,1.9),CF(d+V(0,0.15,gap.z)),C.bronzeDark)
  end
- env.door.symbol=part(hall,"TranslationGlyph",V(1.6,1.6,0.14),CF(d+V(-1,5,0.55)),C.gold)
- for i=1,8 do
-  local a=i*math.pi/4
-  part(hall,"GlyphFacet",V(0.14,0.55,0.15),env.door.symbol.CFrame*CF(math.cos(a)*0.55,math.sin(a)*0.55,0.1)*A(0,0,a),C.warm,Enum.Material.Neon)
+
+ -- 1. ENTRY SHAFT -------------------------------------------------------------
+ -- Where the expedition came through. The ceiling is broken open, there is a
+ -- cone of ice and shattered panel on the floor beneath it, and the light
+ -- from above is the only daylight in the whole facility.
+ local entry=Kit.model("EntryShaft",fac)
+ fpart("ShaftBreach",V(9,1.6,9),CF(d+V(0,13.2,38)),Color3.fromRGB(150,176,196),Enum.Material.Ice,nil,0.45).Parent=entry
+ for i=1,10 do
+  local a=i/10*math.pi*2
+  fpart("BreachEdge",V(2.6,1.4,1.2),CF(d+V(math.sin(a)*5,13.1,38+math.cos(a)*5))*A(0,a,0.2),C.facMetal).Parent=entry
  end
+ local shaftLight=Instance.new("SpotLight")
+ shaftLight.Face=Enum.NormalId.Bottom;shaftLight.Angle=52;shaftLight.Range=30;shaftLight.Brightness=1.5
+ shaftLight.Color=Color3.fromRGB(206,224,236)
+ shaftLight.Parent=fpart("ShaftDaylight",V(6,0.2,6),CF(d+V(0,12.6,38)),Color3.fromRGB(206,224,236),Enum.Material.Neon,nil,0.6)
+ for i=1,16 do
+  fpart("FallenIce",V(rng:NextNumber(1,3.4),rng:NextNumber(0.6,2),rng:NextNumber(1,3.4)),
+   CF(d+V(rng:NextNumber(-5.5,5.5),rng:NextNumber(0.3,2),38+rng:NextNumber(-5.5,5.5)))*A(rng:NextNumber(-0.4,0.4),rng:NextNumber(0,3),0),
+   C.ice,Enum.Material.Ice).Parent=entry
+ end
+ for i=1,4 do
+  fpart("ShatteredPanel",V(3,0.3,2.4),CF(d+V(-4+i*2.4,0.4,34+i*0.7))*A(0,rng:NextNumber(0,3),rng:NextNumber(-0.3,0.3)),C.facComposite).Parent=entry
+ end
+ -- The expedition's descent ladder and its first two lamps.
+ for rung=1,14 do
+  Kit.beam(entry,"DescentLadderRung",d+V(-0.8,rung*0.92,41.5),d+V(0.8,rung*0.92,41.5),0.1,C.hiVis)
+ end
+ for _,side in {-1,1} do
+  Kit.beam(entry,"DescentLadderStile",d+V(side*0.9,0,41.5),d+V(side*0.9,13.4,41.5),0.13,C.hiVis)
+ end
+ expeditionLamp(d+V(-6.5,0,33),d+V(0,4,26))
+ expeditionLamp(d+V(6.5,0,40),d+V(0,4,36))
+ cable(fac,d+V(0,12.8,41),d+V(-8,0.6,30),1.4)
+ crate(fac,CF(d+V(8,1.4,34)),V(2.8,2.4,2.8))
+
+ -- 2. AIRLOCK / DECONTAMINATION ----------------------------------------------
+ -- The jammed door is the single most useful object in the facility: it says
+ -- the building tried to close itself and could not finish.
+ local lock=Kit.model("Airlock",fac)
+ env.jammedDoor=fpart("JammedBulkheadDoor",V(11,9.4,0.7),CF(d+V(-4.4,5,27.4)),C.facMetal,Enum.Material.DiamondPlate)
+ env.jammedDoor.Parent=lock
+ for i=1,4 do
+  fpart("DoorRib",V(10.4,0.5,0.9),CF(d+V(-4.4,2+i*2,27.2)),C.facPanel).Parent=lock
+ end
+ fpart("DoorRunner",V(20,0.7,1.2),CF(d+V(0,10.2,27.4)),C.bronzeDark).Parent=lock
+ fpart("DoorSeizedActuator",V(1.4,1.4,1.6),CF(d+V(1.6,10.2,27.4)),C.bronze).Parent=lock
+ for i=1,3 do
+  -- Decontamination emitter rings, dark. They still look like they would work.
+  for n=1,12 do
+   local a=n/12*math.pi*2
+   fpart("EmitterSegment",V(1.1,0.5,0.55),CF(d+V(math.sin(a)*8.6,5.5+math.cos(a)*5.5,18+i*3))*A(0,math.pi/2,a),C.bronzeDark).Parent=lock
+  end
+ end
+ fpart("FloorGrate",V(16,0.2,9),CF(d+V(0,0.12,22)),C.facMetal,Enum.Material.DiamondPlate).Parent=lock
+ for i=1,9 do
+  fpart("GrateSlot",V(15,0.1,0.35),CF(d+V(0,0.24,18.5+i*0.8)),Color3.fromRGB(8,10,12)).Parent=lock
+ end
+ -- A dead control niche beside the inner door, and the band of glyphs that
+ -- labels it. This is the audience's second look at the script.
+ fpart("ControlNiche",V(3.4,4,1.2),CF(d+V(8.4,4.4,24)),C.facComposite).Parent=lock
+ fpart("NichePanel",V(2.8,2.2,0.2),CF(d+V(8,4.8,23.4))*A(0,math.rad(-90),0),Color3.fromRGB(10,12,14),Enum.Material.Glass).Parent=lock
+ env.airlockGlyphs=Glyph.band(lock,{"Gate","Bind","Life"},CF(d+V(8.1,2.6,24))*A(0,math.rad(-90),0),0.42,1.3,C.bronzeDark,{emissive=false})
+ ancientFixture(d+V(-8.6,9.4,21),0.5,14)
+ -- Frost creeping in from the breached end.
+ for i=1,10 do
+  fpart("CreepingFrost",V(rng:NextNumber(1.6,4),rng:NextNumber(1,3),0.16),
+   CF(d+V(rng:NextNumber(-9,9),rng:NextNumber(1,7),27.9))*A(0,0,rng:NextNumber(-0.5,0.5)),C.frost,Enum.Material.Ice,nil,0.45).Parent=lock
+ end
+
+ -- 3. MAINTENANCE CORRIDOR ----------------------------------------------------
+ local corridor=Kit.model("MaintenanceCorridor",fac)
+ -- The conduit trench: the corridor's spine, and the reason the floor is
+ -- interesting to look along. One grating panel has been taken up and set
+ -- against the wall - evidence, not damage.
+ fpart("ConduitTrench",V(4.4,1.2,16),CF(d+V(0,0.1,8)),Color3.fromRGB(8,9,11)).Parent=corridor
+ for _,offset in {-1.1,1.1} do
+  cylinder(corridor,"TrenchConduit",V(15.6,0.8,0.8),CF(d+V(offset,0.5,8)),C.bronzeDark,"z")
+ end
+ for i=1,7 do
+  local z=1.2+(i-1)*2.2
+  if i~=4 then
+   fpart("TrenchGrating",V(4.4,0.16,2),CF(d+V(0,0.72,z)),C.facMetal,Enum.Material.DiamondPlate).Parent=corridor
+  end
+ end
+ fpart("LiftedGratingPanel",V(4.4,0.16,2),CF(d+V(-8.4,1.1,7.6))*A(0,0,math.rad(74)),C.facMetal,Enum.Material.DiamondPlate).Parent=corridor
+ -- Cable bundles overhead, one of them collapsed onto the deck.
+ for _,side in {-1,1} do
+  cable(corridor,d+V(side*7,11.4,0.5),d+V(side*7,11.4,15.5),0.9)
+ end
+ cable(corridor,d+V(-4,11.2,4),d+V(-6.5,1,10),3.2)
+ fpart("CollapsedBundle",V(2.6,0.9,4.4),CF(d+V(-7,0.6,11))*A(0,0.3,0),C.dark).Parent=corridor
+ fpart("PulledCeilingPanel",V(4,0.3,2.6),CF(d+V(6.4,0.55,9.4))*A(0,0.4,math.rad(12)),C.facPanel).Parent=corridor
+ -- The exposed structure above the two missing coffers.
+ for z=7.5,10.5,1.5 do
+  fpart("ExposedCeilingTruss",V(18,0.5,0.5),CF(d+V(0,11.4,z)),C.facMetal).Parent=corridor
+ end
+ -- A scorch, around a junction box that clearly failed.
+ fpart("JunctionBox",V(2,2.4,0.9),CF(d+V(10.2,5,13)),C.facComposite).Parent=corridor
+ fpart("ScorchMark",V(0.14,5,4.4),CF(d+V(10.4,6,13)),Color3.fromRGB(16,14,13),Enum.Material.Slate).Parent=corridor
+ fpart("BurstPanelDoor",V(0.2,2,1.6),CF(d+V(10.3,4.4,11.6))*A(0,0,math.rad(20)),C.facMetal).Parent=corridor
+ -- The wall band: the SAME four marks that are on the structure's roof, on
+ -- the key, and on the gate. Third sighting, still unexplained.
+ env.corridorGlyphs=Glyph.band(corridor,Glyph.Phrases.SealAuthority,CF(d+V(-10.6,5.4,8))*A(0,math.rad(90),0),0.55,2.2,C.bronzeDark,{emissive=false})
+ ancientFixture(d+V(9.4,10,4),0.5,15)
+ -- THE one fixture in the building that still works, and it is the wrong
+ -- colour to be anything the expedition brought.
+ env.survivingFixture=ancientFixture(d+V(-9.4,9.6,12),1.1,22)
+ for i=1,12 do
+  fpart("WallFrost",V(0.16,rng:NextNumber(1.4,3.6),rng:NextNumber(1.6,4)),
+   CF(d+V((i%2==0 and 1 or -1)*10.4,rng:NextNumber(1.5,8),rng:NextNumber(1,15))),C.frost,Enum.Material.Ice,nil,0.5).Parent=corridor
+ end
+ expeditionLamp(d+V(7.5,0,3),d+V(0,4,-4))
+
+ -- 4. OPERATIONS BAY ----------------------------------------------------------
+ local ops=Kit.model("OperationsBay",fac)
+ env.opsBay=ops
+ for _,side in {-1,1} do
+  for _,z in {-4,-11} do
+   local cf=CF(d+V(side*14,0,z))*A(0,side*math.pi/2,0)
+   fpart("StationDesk",V(6,0.3,2.6),cf*CF(0,3,0),C.facMetal,Enum.Material.DiamondPlate).Parent=ops
+   fpart("StationBody",V(5.6,2.9,2.2),cf*CF(0,1.5,0.15),C.facComposite).Parent=ops
+   local screen=fpart("DeadScreen",V(3.4,2,0.16),cf*CF(0,4.6,-0.7)*A(math.rad(-10),0,0),Color3.fromRGB(12,14,16),Enum.Material.Glass)
+   screen.Parent=ops
+   -- The one the dead-workstation insert is framed on. Naming a real part as
+   -- that shot's subject (rather than a point in the air in front of it) is
+   -- what lets the camera's obstruction test exclude the bay it is standing
+   -- in, instead of reporting the console's own surround as an obstruction.
+   if side<0 and z==-4 then env.deadScreen=screen end
+   fpart("ScreenSurround",V(3.9,2.5,0.12),cf*CF(0,4.6,-0.82)*A(math.rad(-10),0,0),C.bronzeDark).Parent=ops
+   -- A frost bloom growing over the panel: the room has been this cold for a
+   -- very long time.
+   fpart("PanelFrost",V(2.4,1.4,0.06),cf*CF(-0.5,4.3,-0.62)*A(math.rad(-10),0,0),C.frost,Enum.Material.Ice,nil,0.55).Parent=ops
+   fpart("StationConsoleLip",V(4.6,0.3,0.9),cf*CF(0,3.2,1),C.bronzeDark).Parent=ops
+  end
+ end
+ -- A chair, pushed back and turned away from the console it belongs to.
+ local chairAt=CF(d+V(-9.6,0,-6.6))*A(0,math.rad(38),0)
+ fpart("ChairSeat",V(1.9,0.26,1.8),chairAt*CF(0,1.6,0),C.facComposite).Parent=ops
+ fpart("ChairBack",V(1.9,1.8,0.24),chairAt*CF(0,2.5,0.78)*A(math.rad(10),0,0),C.facComposite).Parent=ops
+ cylinder(ops,"ChairColumn",V(1.5,0.24,0.24),chairAt*CF(0,0.8,0),C.facMetal,"y")
+ fpart("ChairBase",V(1.5,0.16,1.5),chairAt*CF(0,0.1,0),C.facMetal).Parent=ops
+ -- A tool left on a work surface, exactly where somebody put it down.
+ fpart("AbandonedTool",V(0.4,0.3,2.2),CF(d+V(13.4,3.25,-4.6))*A(0,math.rad(14),0),C.bronze).Parent=ops
+ fpart("ToolHead",V(0.75,0.5,0.75),CF(d+V(13.4,3.3,-5.6)),C.bronzeDark).Parent=ops
+ -- A sealed cabinet, standing open.
+ fpart("EquipmentCabinet",V(3,6,2),CF(d+V(-15.4,3,4.4)),C.facComposite).Parent=ops
+ fpart("CabinetDoor",V(0.2,5.6,1.9),CF(d+V(-13.8,3,3.3))*A(0,math.rad(-58),0),C.facMetal).Parent=ops
+ for i=1,4 do
+  fpart("CabinetShelf",V(2.7,0.14,1.7),CF(d+V(-15.4,0.9+i*1.2,4.4)),C.facMetal).Parent=ops
+ end
+ fpart("CabinetContents",V(1.4,0.9,1.2),CF(d+V(-15.4,3.6,4.4)),C.bronzeDark).Parent=ops
+ -- Equipment racks, one with its maintenance panel off and leaning on it.
+ for _,side in {-1,1} do
+  local rack=Kit.model("EquipmentRack",ops)
+  fpart("RackFrame",V(4,7,2),CF(d+V(side*15,3.5,-14)),C.facComposite).Parent=rack
+  for n=1,7 do
+   fpart("RackUnit",V(3.5,0.66,0.3),CF(d+V(side*15,0.9+n*0.85,-13.1)),C.facMetal).Parent=rack
+  end
+ end
+ fpart("RemovedMaintenancePanel",V(0.2,6.2,3.4),CF(d+V(-12.8,3.1,-13))*A(0,0,math.rad(9)),C.facMetal).Parent=ops
+ -- An observation window into darkness. What is behind it is never explained,
+ -- which is exactly why it works.
+ fpart("ObservationFrame",V(13,6.4,0.9),CF(d+V(0,6.4,-15.6)),C.facMetal).Parent=ops
+ fpart("ObservationGlass",V(11.6,5,0.3),CF(d+V(0,6.4,-15.7)),Color3.fromRGB(24,34,40),Enum.Material.Glass,nil,0.2).Parent=ops
+ fpart("ObservationVoid",V(11.6,5,1.4),CF(d+V(0,6.4,-16.4)),Color3.fromRGB(3,4,5),Enum.Material.SmoothPlastic).Parent=ops
+ for i=1,3 do
+  fpart("WindowMullion",V(0.34,5,0.4),CF(d+V(-4+(i-1)*4,6.4,-15.6)),C.bronzeDark).Parent=ops
+ end
+ -- A collapsed ceiling section in the far corner, with what came down.
+ fpart("CollapsedCeiling",V(7,0.6,6),CF(d+V(12.4,1.2,-12.6))*A(math.rad(18),0,math.rad(-24)),C.facComposite).Parent=ops
+ for i=1,6 do
+  fpart("CeilingDebris",V(rng:NextNumber(0.8,2.4),rng:NextNumber(0.4,1.2),rng:NextNumber(0.8,2.4)),
+   CF(d+V(9+rng:NextNumber(-2,4),rng:NextNumber(0.3,1.4),-10+rng:NextNumber(-3,3)))*A(0,rng:NextNumber(0,3),0),C.facPanel).Parent=ops
+ end
+ for z=-13.5,-9.5,2 do
+  fpart("HangingConduit",V(0.5,4.2,0.5),CF(d+V(12,10,z))*A(math.rad(20),0,math.rad(-14)),C.bronzeDark).Parent=ops
+ end
+ ancientFixture(d+V(0,18,-8),0.45,20)
+ expeditionLamp(d+V(-10,0,-9),d+V(0,4,-14))
+ expeditionLamp(d+V(9.5,0,1.5),d+V(0,4,-6))
+
+ -- 5. THE GATE HALL AND THE INNER GATE ----------------------------------------
+ --[[
+  Not a pair of fantasy doors. A containment bulkhead: two sliding leaves,
+  two deep piers they retract INTO, eight lock dogs along the leaf/pier
+  interface, two drive drums over the head, and one lock housing set into the
+  right-hand pier at chest height.
+ 
+  The pier geometry is load-bearing rather than decorative. A sliding leaf
+  that ends the shot standing proud of its own frame reads as a prop that has
+  been slid sideways; a leaf that disappears behind a pier reads as a door
+  that has retracted. So each pier is WIDER than the leaf it swallows (9.4
+  against 8.2) and sits 1.6 studs in front of it, and the travel is exactly
+  the leaf's own width.
+ 
+  It is DEAD at build - no Neon anywhere, no light, every glyph at setLit(0) -
+  which is what lets the unlock read as something being switched on rather
+  than something merely being noticed.
+ ]]
+ local hall=Kit.model("GateHall",fac)
+ local LEAF_W,LEAF_H=8.2,21
+ local LEAF_Z,PIER_Z,FACE_Z=-37,-35.4,-34
+ fpart("ApproachApron",V(34,0.4,20),CF(d+V(0,0.2,-26)),C.facComposite,Enum.Material.Slate).Parent=hall
+ fpart("HallThresholdStep",V(30,0.45,2.4),CF(d+V(0,0.22,-17.4)),C.facSlate,Enum.Material.Slate).Parent=hall
+ for _,side in {-1,1} do
+  -- At z=-24 the left buttress stood directly between the hall and the key
+  -- alcove, so the discovery shot was looking into the recess THROUGH it.
+  fpart("HallButtress",V(2.6,24,3.4),CF(d+V(side*14.5,12,-21)),C.facMetal).Parent=hall
+  fpart("ButtressArmour",V(1.2,22,1.2),CF(d+V(side*13.3,11,-21)),C.facIvory).Parent=hall
+  ancientFixture(d+V(side*13,15,-19),0.4,18)
+ end
+ -- The void behind the leaves. Whatever light the hall has must not reach
+ -- into it, or the chamber beyond is visible through the seam before the gate
+ -- has opened.
+ fpart("GateVoid",V(18,LEAF_H,4),CF(d+V(0,LEAF_H/2,LEAF_Z-3)),Color3.fromRGB(3,4,5),Enum.Material.SmoothPlastic).Parent=hall
+ -- Leaves.
+ env.gateLeaves={}
+ for _,side in {-1,1} do
+  local leaf=Kit.model(side<0 and "GateLeafLeft" or "GateLeafRight",hall)
+  local body=fpart("LeafBody",V(LEAF_W,LEAF_H,1.8),CF(d+V(side*LEAF_W/2,LEAF_H/2,LEAF_Z)),C.facPanel)
+  body.Parent=leaf
+  leaf.PrimaryPart=body
+  for i=1,5 do
+   fpart("LeafSegment",V(LEAF_W-0.5,3.3,0.5),CF(d+V(side*LEAF_W/2,2.2+(i-1)*4.3,LEAF_Z+1.1)),C.facMetal).Parent=leaf
+   fpart("LeafSeam",V(LEAF_W-0.3,0.26,0.7),CF(d+V(side*LEAF_W/2,4.2+(i-1)*4.3,LEAF_Z+1.15)),C.facComposite).Parent=leaf
+  end
+  fpart("LeafEdgeArmour",V(0.8,LEAF_H,1.9),CF(d+V(side*0.4,LEAF_H/2,LEAF_Z)),C.facIvory).Parent=leaf
+  -- Three marks per leaf, standing in a column. A band's own axis is +X, so
+  -- it is rotated a quarter turn about its normal to run vertically.
+  local column=Glyph.band(leaf,side<0 and {"Guardian","Bind","Below"} or {"Warning","Bind","Gate"},
+   CF(d+V(side*LEAF_W/2,LEAF_H/2,LEAF_Z+1.4))*A(0,0,math.pi/2),0.85,6,C.bronzeDark)
+  table.insert(env.gateLeaves,{model=leaf,place=Kit.rigid(leaf,CF(d)),base=CF(d),side=side,glyphs=column})
+ end
+ -- Piers and head beam. The leaf travels LEAF_W and the pier is wider, so a
+ -- fully open leaf is completely behind structure.
+ for _,side in {-1,1} do
+  fpart("GatePier",V(9.4,25,2.6),CF(d+V(side*12.7,12.5,PIER_Z)),C.facMetal).Parent=hall
+  fpart("PierArmour",V(1.3,23,1.3),CF(d+V(side*8.6,11.5,FACE_Z+0.1)),C.facIvory).Parent=hall
+  fpart("PierBase",V(10,2.2,3.4),CF(d+V(side*12.7,1.1,PIER_Z)),C.facComposite).Parent=hall
+ end
+ fpart("GateHeadBeam",V(35,3.4,2.6),CF(d+V(0,22.5,PIER_Z)),C.facMetal).Parent=hall
+ fpart("HeadArmour",V(18,0.9,1.4),CF(d+V(0,20.9,FACE_Z+0.1)),C.facIvory).Parent=hall
+ fpart("GateThreshold",V(35,0.8,3.4),CF(d+V(0,0.5,PIER_Z)),C.bronzeDark,Enum.Material.Slate).Parent=hall
+ -- Lock dogs at the leaf/pier interface, four a side, plus two over the head.
+ -- They withdraw INBOARD, into the leaf they belong to, which is the only
+ -- direction a sliding door's dogs can go.
+ env.gateLocks={}
+ for _,side in {-1,1} do
+  for i=1,4 do
+   local y=3+(i-1)*5.4
+   local dog=fpart("LockDog",V(3.6,1.7,2.4),CF(d+V(side*(LEAF_W-0.4),y,LEAF_Z+1.5)),C.bronze)
+   dog.Parent=hall
+   table.insert(env.gateLocks,{part=dog,base=dog.CFrame,direction=V(-side,0,0)})
+   fpart("LockRecess",V(4,2.3,0.6),CF(d+V(side*(LEAF_W+0.9),y,PIER_Z+1.2)),Color3.fromRGB(6,7,9)).Parent=hall
+  end
+  local head=fpart("HeadLockDog",V(2.4,3.4,2.4),CF(d+V(side*4,LEAF_H+0.3,LEAF_Z+1.5)),C.bronze)
+  head.Parent=hall
+  table.insert(env.gateLocks,{part=head,base=head.CFrame,direction=V(0,-1,0)})
+ end
+ -- Drive drums over the head: something visibly turns before the leaves move,
+ -- so the opening has a cause on screen rather than simply happening.
+ env.gateDrums={}
+ for _,side in {-1,1} do
+  local drum=Kit.model("GateDriveDrum",hall)
+  local axle=d+V(side*6,24.2,LEAF_Z+0.6)
+  cylinder(drum,"DrumBarrel",V(4,5,5),CF(axle),C.bronzeDark)
+  for i=1,6 do
+   local a=i/6*math.pi*2
+   part(drum,"DrumRib",V(4.1,5.2,0.5),CF(axle)*A(a,0,0),C.bronze)
+  end
+  cylinder(drum,"DrumHub",V(4.4,1.7,1.7),CF(axle),C.facMetal)
+  Kit.beam(drum,"DrumChain",axle+V(side*2.3,-0.4,0),d+V(side*(LEAF_W/2),LEAF_H-0.4,LEAF_Z+1.2),0.22,C.bronzeDark)
+  table.insert(env.gateDrums,{model=drum,place=Kit.rigid(drum,CF(axle)),base=CF(axle)})
+ end
+ -- THE LOCK HOUSING, set into the right-hand pier at chest height. Keeping
+ -- the socket OFF the seam is what lets the circuit stay whole while the
+ -- leaves part, and it puts the key where a person can actually reach it.
+ local housingCF=CF(d+V(10.6,5.6,FACE_Z+1.2))
+ env.gateSocketCF=housingCF
+ fpart("LockHousing",V(5,6.4,1.6),housingCF,C.facComposite).Parent=hall
+ fpart("HousingBezel",V(4.2,5.6,0.3),housingCF*CF(0,0,0.85),C.bronzeDark).Parent=hall
+ for i=1,10 do
+  local a=i/10*math.pi*2
+  fpart("SocketJaw",V(0.55,1.1,0.5),housingCF*CF(math.sin(a)*1.75,math.cos(a)*1.75,0.92)*A(0,0,-a),C.bronze).Parent=hall
+ end
+ env.gateSocket=fpart("GateSocket",V(3.1,3.1,0.5),housingCF*CF(0,0,0.76),Color3.fromRGB(7,8,10),Enum.Material.SmoothPlastic,"ball")
+ env.gateSocket.Parent=hall
+ env.gateSocketCore=fpart("SocketCore",V(0.9,0.9,0.3),housingCF*CF(0,0,0.96),C.bronzeDark)
+ env.gateSocketCore.Parent=hall
+ env.gateSocketRing=Glyph.ring(hall,Glyph.Phrases.SealAuthority,housingCF*CF(0,0,1),2.35,0.42,C.bronzeDark)
+ --[[
+  THE CIRCUIT. Recessed channel segments running from the housing, up the
+  right pier, across the head and down the left pier, built IN PATH ORDER -
+  which is the only reason Env.setGateUnlock can light them one after another
+  and have the charge visibly travel rather than simply appear.
+ ]]
+ env.gateChannel={}
+ local function channelRun(from,to,count)
+  for i=1,count do
+   local a=from:Lerp(to,(i-1)/count)
+   local b=from:Lerp(to,i/count)
+   local seg=fpart("LockChannelSegment",V(0.75,(b-a).Magnitude+0.1,0.5),CFrame.lookAt((a+b)/2,b)*A(math.rad(90),0,0),C.bronzeDark)
+   seg.Parent=hall
+   table.insert(env.gateChannel,seg)
+  end
+ end
+ channelRun(d+V(10.6,8.2,FACE_Z+1.1),d+V(10.6,21.4,FACE_Z+1.1),6)
+ channelRun(d+V(10.6,21.4,FACE_Z+1.1),d+V(-10.6,21.4,FACE_Z+1.1),10)
+ channelRun(d+V(-10.6,21.4,FACE_Z+1.1),d+V(-10.6,8.2,FACE_Z+1.1),6)
+ for _,seg in env.gateChannel do
+  fpart("ChannelRecess",V(1.15,seg.Size.Y,0.3),seg.CFrame*CF(0,0,-0.35),Color3.fromRGB(6,7,9)).Parent=hall
+ end
+ -- THE SEAL KEY AND ITS PEDESTAL ----------------------------------------------
+ -- Not a medieval key. An open resonance ring on an asymmetric spine, with a
+ -- small core inside it and the same four marks engraved along its flank -
+ -- so the object itself is a copy of the glyph called "Key", which is how the
+ -- audience is told what it is without anybody saying so.
+ --
+ -- It is found IN ITS CRADLE, in a recess beside the mechanism it belongs to,
+ -- never lying loose on the floor: the pedestal is what makes it obvious that
+ -- the thing and the door are one design.
+ local pedestalAt=d+V(-15.4,0,-27)
+ env.keyPedestalAt=pedestalAt
+ local ped=Kit.model("KeyPedestal",hall)
+ env.keyPedestal=ped
+ -- The alcove. Its armour is a SURROUND - lintel, sill and two reveals around
+ -- the mouth - not a plate across it: the discovery shot looks into this
+ -- recess from the hall, and a closed face would simply block it.
+ -- The recess is a VOID: a back panel and four liners, not a filled block.
+ -- Built as one box it contained the plinth and the key, so the discovery
+ -- shot was looking at an object inside a solid.
+ fpart("RecessBack",V(0.6,9,8),CF(pedestalAt+V(-3.1,4.5,0)),Color3.fromRGB(5,6,7)).Parent=ped
+ fpart("RecessCeiling",V(3.2,0.6,8),CF(pedestalAt+V(-1.6,8.8,0)),Color3.fromRGB(5,6,7)).Parent=ped
+ fpart("RecessFloor",V(3.2,0.6,8),CF(pedestalAt+V(-1.6,0.3,0)),Color3.fromRGB(5,6,7)).Parent=ped
+ for _,side in {-1,1} do
+  fpart("RecessSide",V(3.2,9,0.6),CF(pedestalAt+V(-1.6,4.5,side*3.7)),Color3.fromRGB(5,6,7)).Parent=ped
+ end
+ fpart("RecessLintel",V(0.8,0.9,8.6),CF(pedestalAt+V(-0.1,9.1,0)),C.facIvory).Parent=ped
+ fpart("RecessSill",V(0.8,0.6,8.6),CF(pedestalAt+V(-0.1,0.3,0)),C.facIvory).Parent=ped
+ for _,side in {-1,1} do
+  fpart("RecessReveal",V(0.8,9,0.9),CF(pedestalAt+V(-0.1,4.5,side*4)),C.facIvory).Parent=ped
+ end
+ fpart("PedestalPlinth",V(2.6,3.9,3.4),CF(pedestalAt+V(-1.1,1.95,0)),C.facComposite).Parent=ped
+ fpart("PlinthCap",V(3.1,0.5,3.9),CF(pedestalAt+V(-1.1,4.05,0)),C.facMetal).Parent=ped
+ -- The cradle: a ring-shaped depression with a raised rim and a slot for the
+ -- spine. The key's own outline, cut into the stone.
+ local cradleTop=pedestalAt+V(-1.1,4.3,0)
+ for i=1,16 do
+  local a=i/16*math.pi*2
+  fpart("CradleRim",V(0.42,0.2,0.28),CF(cradleTop+V(math.sin(a)*1.22,0,math.cos(a)*1.22))*A(0,a,0),C.bronze).Parent=ped
+ end
+ fpart("CradleWell",V(2.5,0.22,2.5),CF(cradleTop+V(0,-0.12,0)),Color3.fromRGB(6,7,9),Enum.Material.SmoothPlastic,"ball").Parent=ped
+ fpart("CradleSpineSlot",V(0.55,0.2,3.1),CF(cradleTop+V(0,-0.08,0))*A(0,math.rad(18),0),Color3.fromRGB(6,7,9)).Parent=ped
+ env.keyPedestalGlyphs=Glyph.band(ped,Glyph.Phrases.SealAuthority,CF(pedestalAt+V(0.35,2.3,0))*A(0,math.rad(90),0),0.34,1.1,C.bronzeDark,{emissive=false})
+ -- Frost over the cradle, cleared in the discovery shot.
+ env.keyFrost=fpart("CradleFrost",V(3.2,0.34,3.6),CF(cradleTop+V(0,0.18,0)),C.frost,Enum.Material.Ice,nil,0.25)
+ env.keyFrost.Parent=ped
+
+ local key=Kit.model("SealKey",hall)
+ env.sealKey=key
+ -- Built about the origin, in a frame where the ring lies in XY and +Z is the
+ -- face normal, so it can be placed flat in the cradle and upright in the
+ -- socket from the same geometry.
+ --[[
+  THREE MASSES AND NOTHING ELSE: a slender open ring, one spine through it,
+  one core inside it.
+
+  The first version was twenty chunky blocks at two materials, and rendered
+  at the distance the discovery shot actually uses it read as a pile of
+  rubble - no ring, no spine, no object. The fixes are all subtraction: the
+  ring segments are a third as thick and there are more of them, the whole
+  ring is ONE material so the silhouette closes, the ivory is cut back to two
+  small accents that mark the gap, and the core cage is gone.
+ ]]
+ local KEY_R=1.05
+ for i=1,15 do
+  -- 300 degrees of ring, and a deliberate 60-degree gap: an OPEN ring, which
+  -- is the shape of a thing that fits INTO something else.
+  local a=math.rad(-150)+(i-1)/14*math.rad(300)
+  part(key,"RingSegment",V(0.15,0.26,0.19),CF(math.sin(a)*KEY_R,math.cos(a)*KEY_R,0)*A(0,0,-a),C.bronze)
+ end
+ for _,a in {math.rad(-150),math.rad(150)} do
+  part(key,"RingGapTerminal",V(0.26,0.26,0.3),CF(math.sin(a)*KEY_R,math.cos(a)*KEY_R,0),C.facIvory)
+ end
+ -- Offset from centre and longer at one end, so the key reads "this way up,
+ -- this end first" from any angle.
+ part(key,"KeySpine",V(0.22,3,0.17),CF(0.16,-0.28,0)*A(0,0,math.rad(-9)),C.bronzeDark)
+ part(key,"SpineTip",V(0.17,0.62,0.14),CF(0.34,-1.78,0)*A(0,0,math.rad(-9)),C.facIvory)
+ part(key,"SpineCollar",V(0.44,0.2,0.28),CF(0.22,-0.92,0),C.bronze)
+ env.keyCore=part(key,"KeyCore",V(0.38,0.38,0.38),CF(0.12,0.1,0),C.bronzeDark,Enum.Material.SmoothPlastic,"ball")
+ -- Three marks along the spine flank, not four around the body: at forearm
+ -- scale a fourth is smaller than a stroke is wide.
+ env.keyGlyphs=Glyph.band(key,{"Key","Gate","Bind"},CF(0.16,-0.1,0.14)*A(0,0,math.rad(-9)),0.21,0.62,C.bronzeDark,{thickness=0.16})
+ for _,p in key:GetDescendants() do
+  if p:IsA("BasePart") then p.CanQuery=false end
+ end
+ -- Three placements, one rigid transform. Flat in its cradle; raised and
+ -- turned in Lyra's hands as she lines it up; seated in the socket.
+ env.keyPlace=Kit.rigid(key,CFrame.new())
+ env.keyCradleCF=CF(cradleTop+V(0,0.35,0))*A(-math.pi/2,0,math.rad(18))
+ env.keyAlignCF=housingCF*CF(-0.4,-0.6,3.6)*A(0,math.rad(28),math.rad(-14))
+ env.keySeatedCF=housingCF*CF(0,0,1.05)
+ env.keyPlace(env.keyCradleCF)
+ expeditionLamp(d+V(-9,0,-23),d+V(-15,4,-27))
+ expeditionLamp(d+V(7,0,-28),d+V(0,9,-35))
  local ch=Env.Zones.ChamberFloor
  local chamber=Kit.folder("AegisVault",env.folder)
  -- Annular floor has a real hole; seal leaves open independently above it.
@@ -2668,39 +4753,173 @@ local function interiors(env,rng)
    part(chamber,"ArchitecturalConduit",V(0.18,60,0.18),CF(pos+V(-2,35,0)),C.gold,Enum.Material.Neon)
   end
  end
+ -- Grouped into one model so 13a can declare it: that shot looks straight
+ -- down at the iris opening, so the iris is in front of its own focal point
+ -- by construction and would otherwise read as an obstruction.
+ env.sealIris=Kit.model("SealIris",chamber)
  env.sealLeaves={}
  for i=1,12 do
   local a=i/12*math.pi*2
-  local p=part(chamber,"SealIris",V(7.5,0.65,15),CF(ch+V(math.sin(a)*7,0.5,math.cos(a)*7))*A(0,a,0),C.gold)
+  local p=part(env.sealIris,"SealLeaf",V(7.5,0.65,15),CF(ch+V(math.sin(a)*7,0.5,math.cos(a)*7))*A(0,a,0),C.bronze)
   table.insert(env.sealLeaves,{part=p,base=p.CFrame,direction=V(math.sin(a),0,math.cos(a))})
  end
- env.sealCrack=cylinder(chamber,"PrisonLight",V(0.2,28,28),CF(ch+V(0,-1,0)),C.violet,"y")
- env.sealCrack.Material=Enum.Material.Neon
+ --[[
+  THE LOWER SEAL, CONCEALED.
+
+  This was a 28-stud violet Neon disc sitting in the middle of the chamber
+  floor from the moment the set was built - which meant the first frame of
+  the first chamber shot showed the audience that there is another level,
+  that it is lit in the colour the film reserves for the enemy, and that the
+  machine is standing on it. That is the entire twist, given away before
+  anybody has walked into the room.
+
+  It is now built INVISIBLE and unlit, and only Env.setLowerSealReveal opens
+  it. Everything violet in the film is behind that one function: this disc,
+  the prison cavern's own practicals and the frozen army's sensors.
+ ]]
+ --[[
+  LIGHT LEAKING UP AROUND THE RIM, not a disc across the opening.
+
+  This used to be a single 28-stud violet plate sitting a stud below the
+  floor. Rendered from above - which is exactly how both reveal shots are
+  framed - it was an opaque purple lid filling the frame, so "the shaft
+  continues impossibly far" read as "there is a flat violet surface just
+  under the floor". The depth the whole twist depends on was invisible.
+
+  Now: sixteen thin arcs at the opening's own edge, so what the audience sees
+  first is light coming up THROUGH the gap, and the middle of the opening
+  stays empty for the shaft below it to be seen down.
+ ]]
+ env.sealRim={}
+ for i=1,16 do
+  local a=i/16*math.pi*2
+  local arc=part(chamber,"SealRimGlow",V(5.4,0.4,0.7),CF(ch+V(math.sin(a)*13.6,-0.5,math.cos(a)*13.6))*A(0,a,0),C.violet,Enum.Material.Neon,nil,1)
+  arc.CanQuery=false
+  table.insert(env.sealRim,arc)
+ end
+ env.lowerSealLights={}
+ env.lowerSealEmissive={}
+ --[[
+  THE SHAFT UNDER THE IRIS.
+
+  Seven rings of containment structure descending under the seal, each one
+  smaller and further apart than the last, so when the iris finally opens the
+  shot looking down has something to measure depth against and the drop reads
+  as impossibly far rather than as a hole in a floor.
+
+  This is ordinary dark structure - bronze and composite, no violet, no
+  emission - and it is invisible for the whole film anyway, because the iris
+  is closed over it. Only the glow at the bottom is gated by
+  setLowerSealReveal.
+ ]]
+ env.sealShaft=Kit.model("ContainmentShaft",chamber)
+ for level=1,7 do
+  local y=-7-level*level*3.1
+  local radius=12.5-level*1.05
+  for i=1,8 do
+   local a=i/8*math.pi*2
+   part(env.sealShaft,"ShaftRingSegment",V(radius*0.85,1.6,2.2),CF(ch+V(math.sin(a)*radius,y,math.cos(a)*radius))*A(0,a,0),level%2==0 and C.bronzeDark or C.facComposite)
+  end
+  for i=1,4 do
+   local a=i/4*math.pi*2+0.4
+   part(env.sealShaft,"ShaftStrut",V(0.7,3.1*(2*level+1),0.7),CF(ch+V(math.sin(a)*radius,y+1.55*(2*level+1)/2,math.cos(a)*radius)),C.facMetal)
+  end
+ end
+ --[[
+  Light at three depths, so the drop can be MEASURED by eye: a faint band
+  behind the fourth ring, a stronger one behind the sixth, and the floor of
+  it a long way under both. One glow at the bottom alone reads as a dot;
+  three, at receding scales, read as distance.
+ ]]
+ for _,spec in {{y=-56,size=12},{y=-106,size=16},{y=-166,size=26}} do
+  local glow=cylinder(chamber,"ShaftDepthGlow",V(0.4,spec.size,spec.size),CF(ch+V(0,spec.y,0)),C.violet,"y")
+  glow.Material=Enum.Material.Neon
+  glow.Transparency=1
+  glow.CanQuery=false
+  table.insert(env.lowerSealEmissive,glow)
+ end
+ -- The containment floor itself: a ring of the SAME marks, set into the deck
+ -- around the iris, dead. When the strain begins they are what changes state
+ -- first, which is how the floor tells Lyra what she is standing on.
+ env.sealFloorGlyphs=Glyph.ring(chamber,Glyph.Phrases.ChamberWarning,CF(ch+V(0,1.05,0))*A(-math.pi/2,0,0),13,1.6,C.bronzeDark)
+ for i=1,16 do
+  local a=i/16*math.pi*2
+  part(chamber,"SealRaceSegment",V(4.4,0.5,1.6),CF(ch+V(math.sin(a)*17.5,0.85,math.cos(a)*17.5))*A(0,a,0),C.bronzeDark)
+ end
  for _,x in {-34,34} do
   -- Reduced from brightness 3 - close enough to the human dialogue blocking
   -- on the chamber floor (see stage() in Sequences.lua) to overexpose them.
   lamp(chamber,CF(ch+V(x,28,8)),C.cyan,60,1.8)
   lamp(chamber,CF(ch+V(x,35,-32)),C.warm,60,1.8)
  end
- env.mythWall=part(chamber,"GuardianPictograph",V(20,9,0.5),CF(ch+V(-38,6,26)),C.ivory,Enum.Material.Slate)
+ --[[
+  THE WARNING BAND.
+
+  The old panels carved the answer in gold: a guardian, chains, and a VIOLET
+  clawed creature underneath it, four times over. A viewer who looks at that
+  wall for two seconds already knows there is a monster below and that the
+  machine is holding it - so Lyra's translation had nothing left to reveal,
+  and the seal failure had nothing left to be a twist about.
+
+  What survives is writing and two damaged figures: the five marks of the
+  chamber phrase, standing in a band, with two badly-eroded relief panels
+  beside them. Lyra can read three of the five, which is exactly the amount
+  of understanding the story needs her to have - enough to be frightened,
+  not enough to explain.
+ ]]
+ env.mythWall=part(chamber,"GuardianInscription",V(24,11,0.6),CF(ch+V(-38,6.5,26)),C.facMetal,Enum.Material.Slate)
+ -- A SURROUND, never a slab across the face. Both translation shots look at
+ -- this wall from the room, and a full-size panel a third of a stud in front
+ -- of it is opaque to the obstruction ray: the camera reported blocked and
+ -- was relocated on every take.
+ for _,side in {-1,1} do
+  part(chamber,"InscriptionFrame",V(1,13,0.5),CF(ch+V(-38+side*12.5,6.5,26.25)),C.facComposite)
+  part(chamber,"InscriptionArmour",V(0.7,12,0.6),CF(ch+V(-38+side*11.8,6.5,26.35)),C.facIvory)
+ end
+ part(chamber,"InscriptionFrame",V(26,1.2,0.5),CF(ch+V(-38,12.6,26.25)),C.facComposite)
+ part(chamber,"InscriptionFrame",V(26,1.2,0.5),CF(ch+V(-38,0.4,26.25)),C.facComposite)
+ env.warningBand=Glyph.band(chamber,Glyph.Phrases.ChamberWarning,env.mythWall.CFrame*CF(0,1.4,0.36),1.5,4.5,C.bronzeDark,
+  -- Cleaned, never energised: see GlyphLanguage's `emissive` note. Lyra
+  -- brushing frost out of a channel is what makes a mark readable here.
+  {emissive=false,lit=Color3.fromRGB(196,162,104)})
+ -- Two eroded figures, kept deliberately unreadable: a standing shape and,
+ -- beneath it, a shape that is only a mass. Nothing here is violet, nothing
+ -- has a claw, and both panels are half lost under frost.
  env.reliefs={}
- for i=1,4 do
-  local cf=env.mythWall.CFrame*CF((i-2.5)*4.6,0,0.36)
-  local panel=part(chamber,"ReliefPanel",V(4,6,0.1),cf,C.deep)
-  -- Recognizable pictograms: guardian torso/head/arms linked to a seal.
-  part(chamber,"CarvedHead",V(0.5,0.5,0.14),cf*CF(0,1.5,0.12),C.gold,nil,"ball")
-  Kit.beam(chamber,"GuardianBody",(cf*CF(0,1.2,0.12)).Position,(cf*CF(0,-0.3,0.12)).Position,0.3,C.gold)
+ for i=1,2 do
+  local cf=env.mythWall.CFrame*CF((i-1.5)*9.4,-3.1,0.36)
+  local panel=part(chamber,"ErodedRelief",V(7,4,0.12),cf,C.facSlate)
+  Kit.beam(chamber,"CarvedStandingFigure",(cf*CF(0,1.2,0.1)).Position,(cf*CF(0,-0.6,0.1)).Position,0.28,C.bronzeDark)
   for _,side in {-1,1} do
-   Kit.beam(chamber,"HoldingArm",(cf*CF(0,0.8,0.12)).Position,(cf*CF(side*1.1,-0.6,0.12)).Position,0.18,C.gold)
-   Kit.beam(chamber,"CarvedChain",(cf*CF(side*1.1,-0.6,0.12)).Position,(cf*CF(side*0.4,-1.6,0.12)).Position,0.08,C.gold)
-   part(chamber,"CreatureClaw",V(0.2,0.7,0.14),cf*CF(side*0.7,-2,0.14)*A(0,0,side*0.5),C.violet,nil,"wedge")
+   Kit.beam(chamber,"CarvedHoldingArm",(cf*CF(0,0.8,0.1)).Position,(cf*CF(side*1.2,-0.5,0.1)).Position,0.16,C.bronzeDark)
   end
+  part(chamber,"CarvedMassBelow",V(3.4,0.7,0.12),cf*CF(0,-1.5,0.1),C.facComposite)
+  part(chamber,"ReliefFrost",V(4.4,2.6,0.1),cf*CF(i==1 and 1.4 or -1.2,-0.4,0.14),C.frost,Enum.Material.Ice,nil,0.4)
   table.insert(env.reliefs,panel)
  end
- env.activationConsole=part(chamber,"PowerConsole",V(4,2.7,2),CF(ch+V(9,1.4,24)),C.metal)
- local screen=part(chamber,"PowerReadout",V(3,1.2,0.12),env.activationConsole.CFrame*CF(0,0.5,1.1)*A(0,math.pi,0),C.deep)
- Kit.label(screen,"EXTERNAL POWER / CONNECTED",C.cyan)
+ --[[
+  THE EXPEDITION'S OWN KIT IN THE CHAMBER. A power console cabled to the
+  machine, and a portable survey monitor on a tripod - the same instrument
+  family as the bore console (see Instrumentation.lua), because the signal
+  spike has to be reported on a HUMAN screen, in human units, for "Aegis was
+  never the source" to be a measurement rather than an assertion.
+ ]]
+ env.activationConsole=part(chamber,"PowerConsole",V(4.4,2.9,2.2),CF(ch+V(9,1.45,24)),C.hullDark)
+ part(chamber,"PowerConsoleDeck",V(4.6,0.26,2.4),CF(ch+V(9,2.95,24)),C.metal,Enum.Material.DiamondPlate)
+ env.powerReadout=part(chamber,"PowerReadout",V(3,1.6,0.12),env.activationConsole.CFrame*CF(0,1.1,1.2)*A(0,math.pi,0)*A(math.rad(18),0,0),Color3.fromRGB(11,13,16))
+ Kit.label(env.powerReadout,"EXTERNAL POWER\nSTANDBY",C.cyan)
+ for i=1,4 do
+  part(chamber,"PowerBreaker",V(0.5,0.3,0.5),CF(ch+V(7.6+(i-1)*0.9,3.1,24.6)),C.hiVis)
+ end
  cable(chamber,ch+V(9,0.4,24),ch+V(3,0.4,7),0.2)
+ local tripod=Kit.model("FieldSurveyTripod",chamber)
+ local monitorAt=ch+V(14.5,0,21)
+ for i=0,2 do
+  part(tripod,"TripodLeg",V(0.2,4.4,0.2),CF(monitorAt+V(math.sin(i*2.1)*0.85,2.2,math.cos(i*2.1)*0.85))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal)
+ end
+ part(tripod,"MonitorBody",V(3.2,2.4,0.7),CF(monitorAt+V(0,5.4,0))*A(0,math.rad(-140),0),C.hullDark)
+ env.fieldScreen=part(tripod,"FieldScreen",V(2.8,2,0.12),CF(monitorAt+V(0,5.4,0))*A(0,math.rad(-140),0)*CF(0,0,-0.42),Color3.fromRGB(11,13,16))
+ env.fieldDisplay=Instrumentation.fieldMonitor(env.fieldScreen,Enum.NormalId.Front)
  env.elevator=Kit.model("EvacuationLift",chamber)
  part(env.elevator,"LiftFloor",V(12,0.5,10),CF(ch+V(25,0.25,35)),C.metal,Enum.Material.DiamondPlate)
  env.liftDoors={}
@@ -2720,60 +4939,35 @@ local function interiors(env,rng)
  local prison=Kit.folder("SovereignPrison",env.folder)
  part(prison,"LowerCavernFloor",V(300,4,260),CF(pr+V(0,-15,15)),C.deep,Enum.Material.Ice)
  --[[
-  THE OBSERVATION LEDGE. Every "Prison" mark in Sequences.lua's STAGING - and
-  the descent walk in 16_PrisonDescent, and the soldier's mark - stands the
-  cast at PrisonCenter's own Y, but the only surface here was the cavern
-  floor 13 studs below, so there was literally nothing under their feet: they
-  either hovered over the drop (before placement raycast for real) or sank to
-  the cavern floor in among the frozen Wardens (after). This is the shelf the
-  whole prison sequence was written to be standing on.
+  THE CONTAINMENT LEDGE.
 
-  It reads as somewhere people arrived at and set up on, not a slab: a rock
-  shelf continuous with the cavern wall behind it, a rail along the drop, a
-  tunnel mouth they came in through, and two portable work lamps that are the
-  only warm light down here - which is also what keeps faces readable against
-  the violet cavern without lighting them from inside.
+  Built as an expedition observation platform, back when Lyra, Voss and a
+  soldier walked down here and looked at the Sovereign BEFORE anybody touched
+  Aegis Zero. Nobody comes down here any more: under the new order the lower
+  prison is never entered, only exposed, and the camera reaches it by looking
+  DOWN through a floor that has just failed.
+
+  So the shelf stays - it is the cavern's own structure, and the wide shot
+  needs a foreground edge to read depth against - but the expedition's kit is
+  gone: two portable work lamps, two cases and a survey tripod that would
+  otherwise be standing in a chamber no human has ever set foot in, lit warm,
+  three shots before the audience is told the place exists. The rail and lip
+  are re-materialled to the facility's own bronze and composite, so they read
+  as part of the building rather than as somewhere people set up.
  ]]
  -- One solid shelf from the cavern floor up to Y=0: the top surface is the
- -- floor the marks assume, and the face below it is the drop they look over.
- part(prison,"ObservationLedge",V(70,26,30),CF(pr+V(-6,-13,-45)),C.ice,Enum.Material.Ice)
- part(prison,"LedgeDeck",V(70,0.4,30),CF(pr+V(-6,-0.2,-45)),C.deep,Enum.Material.Slate)
- -- The front lip overhangs slightly, so the wide shot reads a real edge
- -- rather than a seam between two same-coloured ice blocks.
- part(prison,"LedgeLip",V(70,1.2,1.6),CF(pr+V(-6,-0.6,-30.4)),C.metal,Enum.Material.DiamondPlate)
+ -- gallery, and the face below it is the drop.
+ part(prison,"ContainmentLedge",V(70,26,30),CF(pr+V(-6,-13,-45)),C.ice,Enum.Material.Ice)
+ part(prison,"LedgeDeck",V(70,0.4,30),CF(pr+V(-6,-0.2,-45)),C.facComposite,Enum.Material.Slate)
+ part(prison,"LedgeLip",V(70,1.2,1.6),CF(pr+V(-6,-0.6,-30.4)),C.bronzeDark,Enum.Material.Slate)
  for x=-38,24,6.2 do
-  part(prison,"RailPost",V(0.3,3.4,0.3),CF(pr+V(x,1.7,-30.8)),C.metal)
+  part(prison,"BalustradePost",V(0.3,3.4,0.3),CF(pr+V(x,1.7,-30.8)),C.bronzeDark)
  end
- part(prison,"RailTop",V(64,0.22,0.22),CF(pr+V(-7,3.3,-30.8)),C.metal)
- part(prison,"RailMid",V(64,0.18,0.18),CF(pr+V(-7,2,-30.8)),C.metal)
- -- The way in, at the back of the shelf.
- part(prison,"TunnelMouth",V(14,13,3),CF(pr+V(-9,6.5,-59)),C.dark,Enum.Material.Rock)
+ part(prison,"BalustradeTop",V(64,0.22,0.22),CF(pr+V(-7,3.3,-30.8)),C.bronzeDark)
+ part(prison,"BalustradeMid",V(64,0.18,0.18),CF(pr+V(-7,2,-30.8)),C.bronzeDark)
+ part(prison,"GalleryMouth",V(14,13,3),CF(pr+V(-9,6.5,-59)),C.dark,Enum.Material.Rock)
  for _,side in {-1,1} do
-  part(prison,"TunnelJamb",V(1.6,13,3.4),CF(pr+V(-9+side*7.8,6.5,-59)),C.ivory,Enum.Material.Rock)
- end
- -- Portable work lamps on tripods: a visible source, short range, aimed down
- -- the shelf rather than at the drop, so they light the ground the cast is
- -- standing on and nothing beyond it.
- for _,spot in {V(-20,0,-47),V(9,0,-47)} do
-  local mast=Kit.model("PortableWorkLamp",prison)
-  for i=0,2 do
-   part(mast,"TripodLeg",V(0.24,4.6,0.24),CF(pr+spot+V(math.sin(i*2.1)*0.9,2.3,math.cos(i*2.1)*0.9))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal)
-  end
-  part(mast,"LampBody",V(2,1.2,1),CF(pr+spot+V(0,5,0)),C.metal,Enum.Material.DiamondPlate)
-  local lens=part(mast,"LampLens",V(1.7,0.95,0.14),CF(pr+spot+V(0,5,-0.6)),C.warm,Enum.Material.Neon,nil,0.3)
-  lens.CastShadow=false
-  local beam=Instance.new("SpotLight")
-  beam.Face=Enum.NormalId.Front;beam.Angle=96;beam.Range=26;beam.Brightness=1.1;beam.Color=Color3.fromRGB(255,226,186)
-  beam.Parent=lens
-  cable(mast,pr+spot+V(0,0.4,0),pr+spot+V(-2,0.2,-9),0.4)
- end
- -- The kit they carried down: reads as an expedition, not three people
- -- standing on a rock.
- crate(prison,CF(pr+V(-26,1.4,-53)),V(2.6,2.4,2.6))
- crate(prison,CF(pr+V(-23,1.4,-56)),V(2.2,2,2.2))
- part(prison,"SurveyTripodHead",V(1.2,0.5,0.9),CF(pr+V(14,4.2,-40)),C.dark)
- for i=0,2 do
-  part(prison,"SurveyTripodLeg",V(0.18,4,0.18),CF(pr+V(14,2,-40)+V(math.sin(i*2.1)*0.7,0,math.cos(i*2.1)*0.7))*A(math.cos(i*2.1)*0.17,0,-math.sin(i*2.1)*0.17),C.dark)
+  part(prison,"GalleryJamb",V(1.6,13,3.4),CF(pr+V(-9+side*7.8,6.5,-59)),C.facIvory,Enum.Material.Rock)
  end
  for i=1,36 do
   local a=i/36*math.pi*2
@@ -2781,12 +4975,30 @@ local function interiors(env,rng)
   part(prison,"StratifiedIceWall",V(28,110,25),CF(pos)*A(0,a,0.15),C.ice,Enum.Material.Ice,"wedge")
   Kit.beam(prison,"BlackRoot",pos-V(0,45,0),pos+V(math.sin(i)*18,35,-10),1.6,C.dark)
  end
- -- Reduced range/brightness: at the old 90-stud range and brightness 3 these
- -- reached the human dialogue positions on the prison ledge (see stage()'s
- -- "Prison" positions in Sequences.lua) strongly enough to wash them out -
- -- exactly the "human glows white/pink in the cave" failure. The Sovereign's
- -- own closer shots (17a-19) still read it clearly at this range.
- for _,x in {-45,45} do lamp(prison,CF(pr+V(x,25,-22)),C.violet,60,1.6) end
+ --[[
+  EVERY VIOLET SOURCE IN THE FILM STARTS AT ZERO.
+
+  These used to burn at brightness 1.6 from the moment the set was built. It
+  did not matter while the expedition walked down here in the middle of the
+  film; it matters completely now, because the prison must not exist for the
+  audience until the containment floor fails. Each light keeps its intended
+  value on a TargetBrightness attribute and is handed to
+  Env.setLowerSealReveal, which is the only thing that can turn it up.
+
+  The single cold cyan fill stays lit: it is the light the cavern's own
+  structure is read by in the wide shot, it is not the enemy's colour, and
+  without it the reveal is a black screen with two glowing dots.
+ ]]
+ for _,x in {-45,45} do
+  local practical=lamp(prison,CF(pr+V(x,25,-22)),C.violet,60,0)
+  local light=practical:FindFirstChildOfClass("PointLight")
+  if light then
+   light:SetAttribute("TargetBrightness",1.6)
+   table.insert(env.lowerSealLights,light)
+  end
+  practical.Transparency=1
+  table.insert(env.lowerSealEmissive,practical)
+ end
  lamp(prison,CF(pr+V(0,45,-70)),C.cyan,70,1.6)
  env.prisonSpots={}
  for i=1,16 do table.insert(env.prisonSpots,CF(pr+V((i%4-1.5)*22,-7,35+math.floor(i/4)*18))*A(0,math.pi,0)) end
@@ -2797,7 +5009,9 @@ local function interiors(env,rng)
   part(prison,"FrozenWardenCarapace",V(2.4,4.5,2),CF(pos)*A(0,col*0.2,0.1),C.metal,Enum.Material.Slate,"wedge")
   for _,side in {-1,1} do
    part(prison,"FoldedClaw",V(0.4,3.8,1.2),CF(pos+V(side*1.5,-1,0))*A(0,0,side*0.3),C.dark,nil,"wedge")
+   -- Built fully transparent, and stays that way until 13i lights the army.
    local eye=part(prison,"DormantSensor",V(0.24,0.15,0.12),CF(pos+V(side*0.4,1.4,-1.1)),C.violet,Enum.Material.Neon,nil,1)
+   eye.CanQuery=false
    table.insert(env.armySensors,eye)
   end
  end end
@@ -2840,6 +5054,140 @@ function Env.destroy(handle)
 end
 function Env.openSeal(env,amount)
  for _,leaf in env.sealLeaves do leaf.part.CFrame=leaf.base+leaf.direction*amount*15 end
+end
+
+--------------------------------------------------------------------------------
+-- THE BORE, IN MOTION
+--------------------------------------------------------------------------------
+
+-- `revolutions` is cumulative, so the reel's rotation is driven by how much
+-- hose has actually gone out rather than by a shot's 0..1 parameter - the same
+-- rule the truck wheels follow, and for the same reason: a reel whose speed
+-- disagrees with the depth readout beside it reads as decoration.
+function Env.setReelRotation(env,revolutions: number)
+ if env.reelSpin then env.reelSpin(env.reelAxle*A(revolutions*math.pi*2,0,0)) end
+end
+
+-- How much of the drilling montage has elapsed, 0..1. Drives the snow that
+-- banks up on the plant, which is the passage of time the audience can see
+-- without reading a number off a screen.
+function Env.setBoreWeathering(env,amount: number)
+ local a=math.clamp(amount or 0,0,1)
+ for _,cap in env.boreSnowCaps do
+  cap.part.Size=V(cap.size.X,math.max(0.05,cap.size.Y*a),cap.size.Z)
+  cap.part.Transparency=1-a
+ end
+end
+
+function Env.setBoreSteam(env,rate: number)
+ if env.boreSteam then env.boreSteam.Rate=math.max(0,rate) end
+ if env.plantSteam then env.plantSteam.Rate=math.max(0,rate*0.35+4) end
+end
+
+--------------------------------------------------------------------------------
+-- THE INNER GATE
+--
+-- A staged mechanical unlock, not a door that lights up. Every window below
+-- overlaps the next slightly, so no stage ever completes before the one it
+-- causes has begun, and the whole thing reads as one machine doing one job:
+--
+--   0.06 - 0.24  the socket accepts the key: its ring lights, mark by mark
+--   0.18 - 0.52  charge travels the channel, jamb -> head -> jamb, in order
+--   0.46 - 0.62  the marks on the leaves answer the circuit
+--   0.52 - 0.72  eight lock dogs withdraw into the structure
+--   0.62 - 0.84  the drive drums turn
+--   0.72 - 1.00  and only then do the leaves part
+--
+-- The light is never allowed to arrive somewhere before it has travelled
+-- there: `setProgress` on a band lights one glyph at a time, and the channel
+-- segments were built in path order for exactly this.
+--------------------------------------------------------------------------------
+local function window(a: number,from: number,to: number): number
+ return math.clamp((a-from)/(to-from),0,1)
+end
+
+function Env.setGateUnlock(env,amount: number)
+ local a=math.clamp(amount or 0,0,1)
+ local lit=Glyph.Lit
+ local dead=Glyph.Dead
+
+ local socket=window(a,0.06,0.24)
+ env.gateSocketRing.setProgress(socket*#env.gateSocketRing.glyphs)
+ env.gateSocketCore.Color=dead:Lerp(lit,socket)
+ env.gateSocketCore.Material=if socket>0.02 then Enum.Material.Neon else Enum.Material.Slate
+
+ local travel=window(a,0.18,0.52)*#env.gateChannel
+ for index,segment in env.gateChannel do
+  local charge=math.clamp(travel-(index-1),0,1)
+  segment.Color=dead:Lerp(lit,charge)
+  segment.Material=if charge>0.02 then Enum.Material.Neon else Enum.Material.Slate
+ end
+
+ local answered=window(a,0.46,0.62)
+ for _,leaf in env.gateLeaves do
+  leaf.glyphs.setProgress(answered*#leaf.glyphs.glyphs)
+ end
+
+ -- Dogs withdraw along their own axis, into the structure they belong to.
+ local withdraw=window(a,0.52,0.72)
+ for _,dog in env.gateLocks do
+  dog.part.CFrame=dog.base+dog.direction*withdraw*2.6
+ end
+
+ local turn=window(a,0.62,0.84)
+ for index,drum in env.gateDrums do
+  drum.place(drum.base*A((index==1 and 1 or -1)*turn*math.pi*1.6,0,0))
+ end
+
+ -- Named `separation`, not `part`: this file has a module-level part() builder
+ -- and shadowing it inside a control function is asking for a confusing bug.
+ local separation=window(a,0.72,1)
+ for _,leaf in env.gateLeaves do
+  leaf.place(leaf.base+V(leaf.side*separation*11.4,0,0))
+ end
+end
+
+-- The key's own core, which answers BEFORE the gate does - that ordering is
+-- the whole reason the unlock reads as the key causing it rather than the
+-- door deciding to open.
+function Env.setKeyCharge(env,amount: number)
+ local a=math.clamp(amount or 0,0,1)
+ env.keyCore.Color=Glyph.Dead:Lerp(Glyph.Lit,a)
+ env.keyCore.Material=if a>0.02 then Enum.Material.Neon else Enum.Material.SmoothPlastic
+ env.keyGlyphs.setProgress(a*#env.keyGlyphs.glyphs)
+end
+
+function Env.placeKey(env,cf: CFrame)
+ env.keyPlace(cf)
+end
+
+--------------------------------------------------------------------------------
+-- THE LOWER SEAL
+--
+-- The one gate on every violet pixel in the opening. Nothing else in the film
+-- may turn any of this on, which is what guarantees the prison cannot leak
+-- into a frame before the containment fails.
+--------------------------------------------------------------------------------
+function Env.setLowerSealReveal(env,amount: number)
+ local a=math.clamp(amount or 0,0,1)
+ for _,light in env.lowerSealLights do
+  light.Brightness=((light:GetAttribute("TargetBrightness") :: number?) or 1)*a
+ end
+ for _,emissive in env.lowerSealEmissive do
+  emissive.Transparency=1-a
+ end
+ -- The rim comes up first and hardest: it is the light escaping between the
+ -- iris leaves, which is the only violet in the film until the camera is
+ -- actually pointed down the shaft.
+ for _,arc in env.sealRim do
+  arc.Transparency=1-math.min(a*1.6,1)
+ end
+ -- The containment marks on the chamber floor change state with it: they are
+ -- the last thing that was still holding, and they are read in the shot where
+ -- Lyra looks down.
+ if env.sealFloorGlyphs then
+  env.sealFloorGlyphs.setLit(a)
+ end
 end
 --------------------------------------------------------------------------------
 -- Ground sampling and vehicle motion.
@@ -3927,6 +6275,27 @@ function Cast.pose(r,name,cf)
  r.poses[name]=cf
 end
 --[[
+ Fixes an EXTERNALLY built part to a rig member, so it moves with every pose
+ the rig is driven through.
+
+ Same mechanism `attach` uses internally, exposed because Aegis Zero's chest
+ band is authored by GlyphLanguage rather than by the rig builder and still
+ has to ride the torso: `setAegisRise` pitches the waist by about seventeen
+ degrees, which on a seventeen-stud torso moves the chest several studs, and
+ a band of marks left hanging in the air where the chest used to be is worse
+ than no band at all.
+
+ Appended to r.rigid, which Cast.evaluate walks in insertion order from each
+ host's already-solved CFrame - so a host must be placed before its
+ decoration, and a joint member always is.
+]]
+function Cast.fix(r,host,item)
+ item.Anchored=true
+ local offset=host.CFrame:Inverse()*item.CFrame
+ table.insert(r.rigid,{part=item,host=host,offset=offset})
+ return item
+end
+--[[
  THE FACE, parameterised.
 
  Still the same flat block language: two eyes, two pupils, two brows and a
@@ -5006,40 +7375,50 @@ local function applyMood(props: { [string]: any }, atmosphere: { [string]: any }
 	end
 end
 
--- Storm-lit Arctic exterior: pale, low sun through heavy cloud, blue-gray
--- shift, tight fog so the map boundary never shows.
-function NPLighting.exterior()
+--[[
+	Storm-lit Arctic exterior: pale, low sun through heavy cloud, blue-grey
+	shift, tight fog so the map boundary never shows.
+
+	`advance` (0..1) walks the polar afternoon toward evening across the
+	drilling montage. It exists so "hours have passed" can be told by the
+	light rather than by a caption or a spinning clock: the sun drops, the
+	scene cools and darkens, and by the end the site's own floodlights are
+	doing most of the work. Called with no argument it is the same afternoon
+	preset every other exterior shot uses.
+]]
+function NPLighting.exterior(advance: number?)
+	local a = math.clamp(advance or 0, 0, 1)
 	applyMood({
 		-- A low polar sun late in the day rather than flat midday overcast.
 		-- The site's floodlights, the route beacons and the trucks' headlamps
 		-- are all meant to read as light sources; under a 1.6-brightness
 		-- noon sky none of them registered at all, and the snowfield was one
 		-- undifferentiated white plane with no sense of scale.
-		ClockTime = 16.9,
+		ClockTime = 16.9 + 3.6 * a,
 		GeographicLatitude = 78,
-		Brightness = 1.15,
-		ExposureCompensation = -0.12,
-		Ambient = Color3.fromRGB(52, 60, 74),
-		OutdoorAmbient = Color3.fromRGB(96, 110, 130),
-		ColorShift_Top = Color3.fromRGB(38, 40, 46),
+		Brightness = 1.15 - 0.42 * a,
+		ExposureCompensation = -0.12 - 0.06 * a,
+		Ambient = Color3.fromRGB(52, 60, 74):Lerp(Color3.fromRGB(34, 40, 54), a),
+		OutdoorAmbient = Color3.fromRGB(96, 110, 130):Lerp(Color3.fromRGB(58, 68, 88), a),
+		ColorShift_Top = Color3.fromRGB(38, 40, 46):Lerp(Color3.fromRGB(46, 36, 38), a),
 		ColorShift_Bottom = Color3.fromRGB(10, 14, 22),
-		FogColor = Color3.fromRGB(126, 140, 158),
-		FogStart = 60,
-		FogEnd = 320,
+		FogColor = Color3.fromRGB(126, 140, 158):Lerp(Color3.fromRGB(74, 82, 100), a),
+		FogStart = 60 - 22 * a,
+		FogEnd = 320 - 90 * a,
 	}, {
-		Haze = 3.2,
-		Glare = 0.1,
-		Color = Color3.fromRGB(180, 190, 200),
-		Decay = Color3.fromRGB(120, 132, 148),
+		Haze = 3.2 + 0.6 * a,
+		Glare = 0.1 * (1 - a),
+		Color = Color3.fromRGB(180, 190, 200):Lerp(Color3.fromRGB(122, 130, 148), a),
+		Decay = Color3.fromRGB(120, 132, 148):Lerp(Color3.fromRGB(64, 72, 90), a),
 	}, {
 		Cover = 0.85,
-		Density = 0.6,
-		Color = Color3.fromRGB(150, 156, 164),
+		Density = 0.6 + 0.12 * a,
+		Color = Color3.fromRGB(150, 156, 164):Lerp(Color3.fromRGB(96, 102, 116), a),
 	}, {
 		Brightness = -0.02,
-		Contrast = 0.1,
+		Contrast = 0.1 + 0.04 * a,
 		Saturation = -0.35,
-		TintColor = Color3.fromRGB(214, 222, 232),
+		TintColor = Color3.fromRGB(214, 222, 232):Lerp(Color3.fromRGB(186, 196, 218), a),
 	})
 end
 
@@ -5115,6 +7494,66 @@ function NPLighting.ancientInterior()
 		Contrast = 0.12,
 		Saturation = -0.2,
 		TintColor = Color3.fromRGB(200, 226, 228),
+	})
+end
+
+--[[
+	THE ABANDONED FACILITY.
+
+	Not the ancient-interior preset, which is a cool teal cave mood built for
+	a passage carved out of ice. This is a BUILDING - flat dark metal, black
+	composite, frost - and it has to read as one: architecture legible, deep
+	shadows that still hold shape, and no ambient bright enough to pretend the
+	place is powered.
+
+	Three light sources are meant to be tellable apart on screen, which is the
+	whole job of this preset:
+
+	  * the building's own surviving emergency fixtures, COLD cyan, weak, and
+	    almost all dead - one per room at most;
+	  * the expedition's portable lamps, WARM, aimed, and obviously carried in;
+	  * the daylight falling down the entry shaft, which is the only thing in
+	    here that is neither.
+
+	So ambient is deliberately neutral and low rather than tinted: a tinted
+	fill would wash both of the other two into the same colour and the contrast
+	that tells the story would be gone. Bloom is held down hard, because a
+	single Neon strip in a dark room is exactly the condition that blooms into
+	a glowing smear.
+
+	Fog is close - it is a cold, still, sealed volume - but starts far enough
+	back that a face at conversation distance is never veiled.
+]]
+function NPLighting.abandonedLab()
+	applyMood({
+		ClockTime = 0,
+		Brightness = 0.5,
+		ExposureCompensation = -0.04,
+		-- Neutral, slightly cool, and above the camera's own readability
+		-- threshold (Camera.inspect wants an ambient average over 0.16) so
+		-- the architecture never collapses to a black screen.
+		Ambient = Color3.fromRGB(50, 54, 60),
+		OutdoorAmbient = Color3.fromRGB(28, 32, 38),
+		ColorShift_Top = Color3.fromRGB(8, 10, 12),
+		ColorShift_Bottom = Color3.fromRGB(3, 4, 6),
+		FogColor = Color3.fromRGB(12, 15, 18),
+		FogStart = 26,
+		FogEnd = 130,
+	}, {
+		Density = 0.22,
+		Haze = 2.1,
+		Glare = 0,
+		Color = Color3.fromRGB(96, 110, 122),
+		Decay = Color3.fromRGB(24, 30, 36),
+	}, nil, {
+		Brightness = -0.02,
+		Contrast = 0.15,
+		Saturation = -0.24,
+		TintColor = Color3.fromRGB(226, 234, 238),
+	}, {
+		Intensity = 0.06,
+		Size = 12,
+		Threshold = 2.2,
 	})
 end
 
@@ -5521,6 +7960,8 @@ local Cast=require(script.Parent.Cast)
 local Kit=require(script.Parent.Kit)
 local Camera=require(script.Parent.Camera)
 local Light=require(script.Parent.Lighting)
+local Glyph=require(script.Parent.GlyphLanguage)
+local Instrumentation=require(script.Parent.Instrumentation)
 local Performance=require(script.Parent.PerformanceDirector)
 local Sequences={}
 local N=Config.Cinematic.Names
@@ -5554,15 +7995,44 @@ local STAGING={
   {at=V(-2.8,2.95,0.7),look=V(0,4.2,-4.2),job="CheckingTablet"},
   {at=V(-0.4,3.1,5.4),look=V(-1,4,-1),job="Authority"},
  }},
- Door={origin="Door",marks={
-  {at=V(-1,2.8,4),look=V(0,6,0),job="Idle"},
-  {at=V(3,2.95,9),look=V(0,6,0),job="Idle"},
-  {at=V(-4,3.1,10),look=V(0,6,0),job="Authority"},
+ --[[
+  The bore head. All three are on the operator's side of the console, which
+  puts the screen between them and the tower - so any shot that holds a face
+  also holds the machine they are arguing about.
+
+  Their marks clear the console plinth (2.5 studs of local half-width), the
+  canopy posts and the rig truck parked at x=15, all checked against the real
+  build rather than eyeballed.
+ ]]
+ Bore={origin="BaseCenter",marks={
+  {at=V(12.6,2.8,-12.6),look=V(-14,3,-22),job="Monitoring"},
+  {at=V(9.2,2.95,-10.6),look=V(-14,3,-22),job="CheckingTablet"},
+  {at=V(14.6,3.1,-8.4),look=V(6,3,-14),job="Authority"},
  }},
- Prison={origin="PrisonCenter",marks={
-  {at=V(-9,2.8,-42),look=V(0,10,0),job="Idle"},
-  {at=V(-5,2.95,-40),look=V(0,10,0),job="Scan"},
-  {at=V(0,3.1,-43),look=V(0,10,0),job="Authority"},
+ -- On the exposed structure at the bottom of the cut, clear of the hatch
+ -- throat, the hoist legs, the generator skid and both portable lamps.
+ Excavation={origin="Excavation",marks={
+  {at=V(-3.5,-20.9,-6.5),look=V(0,-21,0),job="Scan"},
+  {at=V(-6.5,-20.9,-5.3),look=V(0,-21,0),job="CheckingTablet"},
+  {at=V(-2,-20.9,-9.8),look=V(-3,-21,-4),job="Authority"},
+ }},
+ -- Inside the facility: first at the foot of the entry shaft, then in the
+ -- operations bay, then before the gate. Three rooms, three blockings, which
+ -- is what makes the walk in feel like distance travelled.
+ LabEntry={origin="Door",marks={
+  {at=V(-7,2.8,31),look=V(0,5,20),job="Scan"},
+  {at=V(6,2.95,33),look=V(0,5,22),job="CheckingTablet"},
+  {at=V(-8,3.1,36),look=V(-2,4,30),job="Authority"},
+ }},
+ Lab={origin="Door",marks={
+  {at=V(-4,2.8,-6),look=V(-13,4.6,-4),job="Scan"},
+  {at=V(-1,2.95,-2.5),look=V(-13,4.6,-4),job="CheckingTablet"},
+  {at=V(4,3.1,-8),look=V(-5,4,-6),job="Authority"},
+ }},
+ GateHall={origin="Door",marks={
+  {at=V(-4.5,3.2,-25),look=V(0,10,-36),job="Scan"},
+  {at=V(-0.5,3.35,-22),look=V(0,10,-36),job="CheckingTablet"},
+  {at=V(5,3.5,-21),look=V(0,10,-36),job="Authority"},
  }},
  Chamber={origin="ChamberFloor",marks={
   {at=V(-5,2.8,24),look=V(0,14,0),job="Idle"},
@@ -5600,12 +8070,60 @@ function Sequences.buildCast(env): CastState
   local p=station and Z.Command+station or Z.BaseCenter+V(-25+i*6,2.8,22+i*3)
   local facing=station and Z.Command+V(station.X*1.6,2.8,station.Z) or Z.BaseCenter+V(0,2.8,-28)
   table.insert(c.scientists,Cast.buildScientist(env.folder,CFrame.lookAt(p,facing),rng,i))
-  table.insert(c.soldiers,Cast.buildSoldier(env.folder,CF(Z.BaseCenter+V(-16+i*4,3,-13-i%2*5)),rng,i))
+  --[[
+   A cordon ACROSS the approach to the working area, facing it, rather than
+   the old line at z = -13/-18 - which ran straight through where the bore
+   plant now stands. Three of the console inserts put the lens within a stud
+   of a soldier's torso, because the camera and the security detail were
+   occupying the same patch of snow.
+  ]]
+  local post=Z.BaseCenter+V(-20+i*6,3,2-(i%2)*4)
+  table.insert(c.soldiers,Cast.buildSoldier(env.folder,CFrame.lookAt(post,Z.BaseCenter+V(0,3,-28)),rng,i))
  end
+ --[[
+  The bore crew, one to each functional mass of the plant, so the machine
+  reads as something being OPERATED rather than as scenery with people near
+  it: the console, the reel, the heater skid, the collar and the power bank.
+  Five positions, five different jobs, all checked clear of the equipment
+  they stand at.
+ ]]
+ --[[
+  One to each functional mass, and every mark checked against the real build
+  rather than eyeballed: clear of the console canopy (which a placement ray
+  reads as a ceiling), clear of the pump skid's raised deck, and clear of the
+  fuel drums - all three of which the first draft put a worker inside.
+ ]]
+ local BORE_CREW={
+  {at=V(6.2,2.8,-24.2),look=V(8.6,3.4,-21)},
+  {at=V(-7.6,2.8,-20.6),look=V(-12.5,4.6,-23.5)},
+  {at=V(-17.6,2.8,-29.4),look=V(-24.5,3.5,-31)},
+  {at=V(3.2,2.8,-21.6),look=V(0,1,-28)},
+  {at=V(-16.6,2.8,-14.2),look=V(-24.5,3.2,-18)},
+ }
  for i=1,5 do
-  table.insert(c.workers,Cast.buildWorker(env.folder,CF(Z.BaseCenter+V(-13+i*5,2.8,-14)),i))
+  local spot=BORE_CREW[i]
+  table.insert(c.workers,Cast.buildWorker(env.folder,CFrame.lookAt(Z.BaseCenter+spot.at,Z.BaseCenter+V(spot.look.X,spot.at.Y,spot.look.Z)),i))
  end
  c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,15,-8))*A(0,math.pi,0),10)
+ --[[
+  THE CHEST BAND.
+
+  The same four marks that are engraved on the buried structure's roof, on
+  the facility corridor, on the seal key, on its cradle and around the gate's
+  lock housing - now on the machine itself. That repetition is the entire
+  mechanism by which the audience works out, at the same moment Lyra does,
+  that the door and the thing behind it are one system. Nobody has to say it.
+
+  Fixed to the torso through Cast.fix rather than left standing in world
+  space: setAegisRise pitches the waist about seventeen degrees, which on a
+  seventeen-stud torso would leave the band hanging in the air where the
+  chest used to be.
+ ]]
+ c.aegisGlyphs=Glyph.band(c.aegis.model,Glyph.Phrases.SealAuthority,
+  c.aegis.torso.CFrame*CF(0,-3.6,-5.1)*A(0,math.pi,0),1.15,3.3,Env.Colors.bronzeDark)
+ for _,item in c.aegisGlyphs.model:GetDescendants() do
+  if item:IsA("BasePart") then Cast.fix(c.aegis,c.aegis.torso,item) end
+ end
  c.sovereign=Cast.buildSovereign(env.folder,CF(Z.PrisonCenter+V(0,21,5)),5.5)
  c.breakingWarden=Cast.buildWarden(env.folder,CF(Z.PrisonCenter+V(-24,0,-7)),0.85,true)
  for _,cf in env.prisonSpots do table.insert(c.frozenWardens,Cast.buildWarden(env.folder,cf,0.55,true)) end
@@ -5620,7 +8138,15 @@ function Sequences.buildCast(env): CastState
   Cast.lookAt(h,station and Z.Command+V(station.X*1.7,4,station.Z) or Z.BaseCenter+V(0,3,-28))
  end
  for i,h in c.workers do
-  h.home=h.root.CFrame;Cast.setActivity(h,(i%2==0 and "OperateDrill" or "CarryCase"));Cast.lookAt(h,Z.BaseCenter+V(0,2,-28))
+  h.home=h.root.CFrame
+  -- Each looks at the thing they are standing at, not all at one point: a row
+  -- of heads turned the same way is the "chorus of NPCs" look. CarryCase and
+  -- OperateDrill are deliberately left out of the rotation here - both lean
+  -- the torso far enough to trip Cast's own upright validator (a known,
+  -- separately-reported defect in those two poses), and the bore crew are the
+  -- most-photographed background figures in the sequence.
+  Cast.setActivity(h,(i%3==0 and "CheckCable" or i%3==1 and "Monitoring" or "TypingConsole"))
+  Cast.lookAt(h,Z.BaseCenter+V(BORE_CREW[i].look.X,BORE_CREW[i].look.Y,BORE_CREW[i].look.Z))
  end
  for i,h in c.soldiers do
   h.home=h.root.CFrame;Cast.setActivity(h,(i%3==0 and "Radio" or i%3==1 and "SecurityWatch" or "PatrolIdle"));Cast.lookAt(h,Z.BaseCenter+V(0,3,-28))
@@ -5681,7 +8207,22 @@ function Sequences.build(env,c,ui): {Shot}
   shot.enter=function()
    if op.stage then stage(op.stage) end
    ui.setSubtitle(nil,"");ui.setTitleCard(nil);ui.setBlackout(op.black and 0 or 1)
-   if op.light=="Exterior" then Light.exterior() elseif op.light=="Command" then Light.commandTent() elseif op.light=="Door" then Light.ancientInterior() elseif op.light=="Prison" then Light.prison() elseif op.light=="Emergency" then Light.emergency() elseif op.light=="Space" then Light.blackout() else Light.chamber(op.energy or 0) end
+   --[[
+    `advance` (0..1) is only meaningful for the two exterior moods: it walks
+    the polar afternoon toward evening, which is how the drilling montage
+    shows that hours have passed without a caption or a clock. "Cut" is the
+    open excavation - the same sky, but always late, because it is a later
+    day.
+   ]]
+   if op.light=="Exterior" then Light.exterior(op.advance)
+   elseif op.light=="Cut" then Light.exterior(op.advance or 1)
+   elseif op.light=="Command" then Light.commandTent()
+   elseif op.light=="Lab" then Light.abandonedLab()
+   elseif op.light=="Door" then Light.ancientInterior()
+   elseif op.light=="Prison" then Light.prison()
+   elseif op.light=="Emergency" then Light.emergency()
+   elseif op.light=="Space" then Light.blackout()
+   else Light.chamber(op.energy or 0) end
    if op.enter then op.enter() end
    if op.speaker then
     ui.setSubtitle(op.speaker,op.text)
@@ -5803,7 +8344,10 @@ function Sequences.build(env,c,ui): {Shot}
   local kind=op.shot or (reactOn and "Reaction" or "Medium");op.shot=nil
   local spec=FRAMING[kind] or FRAMING.Medium
   op.speaker=who;op.text=text;op.stage=stageName;op.expression=emotion;op.voice=voice
-  op.light=op.light or (stageName=="Command" and "Command" or stageName=="Prison" and "Prison" or "Chamber")
+  -- Each staging area's own mood, so a dialogue shot never has to restate it.
+  local STAGE_LIGHT={Command="Command",Bore="Exterior",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
+  op.light=op.light or STAGE_LIGHT[stageName] or "Chamber"
+  if stageName=="Bore" then op.advance=op.advance or 1 end
   op.fov=op.fov or spec.fov
   local subject=reactOn and byName[reactOn] or byName[who]
   --[[
@@ -5999,98 +8543,416 @@ function Sequences.build(env,c,ui): {Shot}
   and eventually collapsed, part-way through the line.
  ]]
  master("06i_BeginDrilling",1.8,"Command",{light="Command",speaker=N.Hale,text="Begin drilling.",expression="Determined",voice="HaleDrill"})
- -- 07. Insert montage; each insert has a specific prop or action.
- add("07a_DrillRotates",2,function() return env.drill:GetChildren()[1] end,V(5,1,7),{light="Exterior",cue="Machinery.DrillLoop",update=function(_,t) env.drill:PivotTo(env.drillBase*A(0,t*6,0));env.drillDust.Rate=35 end,leave=function() env.drillDust.Rate=0 end})
- -- Ahead of the drill head, not behind it: the HeavyDrill rig is parked at
- -- z=-23 and a camera five studs on that side of the contact point was inside
- -- its cab, which the unstick fallback then "corrected" to somewhere else
- -- entirely. From -34 the shot has the excavation between it and the rig.
- add("07b_IceFragments",1.3,function() return Z.BaseCenter+V(0,3.2,-28) end,V(5,1.6,-6),{light="Exterior",cue="Impacts.IceCracking",enter=function() env.drillDust:Emit(35) end})
- add("07c_SampleCollection",1.8,function() return c.workers[1].head end,V(2,1,-6),{light="Exterior",enter=function() Cast.act(c.workers[1],"Scan","Focused",c.workers[1].scanner.Position) end})
- add("07d_CompassAnomaly",1.5,function() return c.workers[1].scanner end,V(0,1.4,-1.4),{light="Exterior",fov=38,update=function(_,t) c.workers[1].scanner.Color=Env.Colors.cyan:Lerp(Env.Colors.orange,math.abs(math.sin(t*9))) end})
- add("07e_SkippingClock",1.2,function() return env.signalDisplay end,V(0,0,-5),{light="Command",update=function(_,t) env.pulses[1].Size=V(0.25,0.5+(math.floor(t*12)%3)*0.5,0.08) end})
- add("07f_MetalUnderIce",1.8,function() return Z.BaseCenter+V(45,30,-32) end,V(5,1,17),{light="Exterior",cue="Machinery.DrillHitsMetal"})
- -- 08–09. Symbol, face, enormous doorway, then architectural scale.
- add("08a_LyraClearsSymbol",2,function() return env.door.symbol end,V(3,0.8,7),{stage="Door",light="Door",enter=function() Cast.act(c.lyra,"ClearIce","Curious",env.door.symbol.Position) end})
- human("08b_OrangeRecognition",1.5,N.Lyra,"","Door","Amazed",nil,{light="Door",action="ClearIce",enter=function() env.door.symbol.Material=Enum.Material.Neon end})
- add("08c_AncientDoorOpens",3,function() return Z.Door+V(0,10,0) end,V(2,1,34),{light="Door",fov=55,cue="Machinery.AncientDoorOpening",update=function(a)
-  env.door.slideLeft(env.door.leftBase+V(-a*10,0,0));env.door.slideRight(env.door.rightBase+V(a*10,0,0))
+ --[[
+  ============================================================================
+  07 - THE DEEP BORE, AND WHAT IT FINDS
+  ============================================================================
+
+  The sequence this replaces was six inserts of an auger turning, ice chips,
+  a sample, a spinning compass, a skipping clock and then, with no
+  preparation at all, metal under the ice. It told the audience nothing about
+  what the expedition was doing and nothing about why the discovery mattered;
+  the spooky-instrument beats were atmosphere standing in for a story.
+
+  This is the discovery told as SCIENCE, in the order it would actually
+  happen, with every beat carrying one new piece of information:
+
+      a plant sending heat two kilometres down
+        -> steady telemetry, nothing wrong
+        -> hours pass
+        -> the line loses pressure, suddenly
+        -> the return says the bore is in a VOID, far too shallow
+        -> the return says the void has a floor that is not ice, and that the
+           floor is REGULAR
+        -> the cut is widened and the thing is standing in the open
+
+  The estimate on the console never changes: SOURCE ESTIMATE 1,984 m, all the
+  way through. That single unmoving number is what makes the discovery legible
+  as the wrong discovery - whatever they have hit at eleven hundred metres,
+  it is not what they came for. Nobody has to explain that, because the
+  instrument says it in every shot.
+ ]]
+ -- One baseline, overridden per beat, so a reading that is NOT the point of a
+ -- shot cannot drift by accident between shots.
+ local BORE_BASELINE={depth=0,hosePayout=0,waterTemperature=81,linePressure=7.2,flowRate=734,signalStrength=1,returnDensity=1,state="ACTIVE",sourceEstimate=1984}
+ local function telemetry(overrides)
+  local reading={}
+  for key,value in BORE_BASELINE do reading[key]=value end
+  if overrides then for key,value in overrides do reading[key]=value end end
+  reading.hosePayout=reading.hosePayout>0 and reading.hosePayout or reading.depth*1.008
+  env.boreDisplay.setTelemetry(reading)
+  -- The reel is driven by DEPTH, never by the shot's own 0..1 parameter: a
+  -- reel whose speed disagrees with the number on the screen beside it reads
+  -- as decoration. Same rule the truck wheels follow.
+  Env.setReelRotation(env,reading.depth*0.05)
+  return reading
+ end
+ add("07a_BoreSystemStarts",5,function() return Z.BaseCenter+V(-4,8,-25) end,V(38,19,33),{light="Exterior",fov=54,stage="Bore",to=V(30,15,26),pace="Slow",cue="Machinery.BoreStart",enter=function()
+  Env.setBoreSteam(env,26)
+  Env.setBoreWeathering(env,0)
+ end,update=function(a)
+  telemetry({depth=206+a*58,state="ACTIVE"})
  end})
- add("09_EnteringStructure",3,function() return c.lyra.head end,V(4,2,12),{light="Door",fov=62,update=function(a)
-  Cast.walk(c.lyra,Z.Door+V(-1,2.8,4),Z.Door+V(-1,2.8,-8),a)
-  Cast.walk(c.voss,Z.Door+V(3,2.95,9),Z.Door+V(3,2.95,-3),a)
+ -- The panel, on the operator's side of the desk. Six values, none of them
+ -- alarming: this shot exists so the audience learns what normal looks like,
+ -- which is the only way the next four can mean anything.
+ add("07b_BoreTelemetry",3.6,function() return env.boreScreen end,V(5.5,1.6,4.5),{light="Exterior",fov=36,speaker=N.Voss,text="Eleven hundred metres of ice, and the return is still clean.",voice="VossBorePlan",update=function(a)
+  telemetry({depth=264+a*46})
  end})
- -- 10–13. Foot -> hands AND chains -> complete kneeling silhouette.
+ --[[
+  TIME PASSES, told four ways at once and with no clock anywhere: the depth
+  jumps eight hundred metres, the light walks from polar afternoon into
+  evening (Light.exterior's `advance`), snow banks up on equipment that was
+  clear in the last shot, and the crew have changed over.
+ ]]
+ add("07c_BoreProgress",4.6,function() return Z.BaseCenter+V(-5,7,-25) end,V(-30,24,24),{light="Exterior",fov=56,to=V(-24,18,19),pace="Slow",cue="Machinery.BoreLoop",enter=function()
+  -- The shift changes. Two of the crew step away from their stations and two
+  -- take them over, which is a thing only time can explain.
+  Cast.place(c.workers[2],Z.BaseCenter+V(-15.4,2.8,-13.4),Z.BaseCenter+V(-24.5,3,-18))
+  Cast.place(c.workers[4],Z.BaseCenter+V(0.6,2.8,-19.4),Z.BaseCenter+V(8.6,3,-21))
+  Cast.setActivity(c.workers[2],"CheckCable");Cast.setActivity(c.workers[4],"Monitoring")
+ end,update=function(a)
+  Light.exterior(a)
+  Env.setBoreWeathering(env,a)
+  Env.setBoreSteam(env,26+a*14)
+  telemetry({depth=310+a*790,waterTemperature=79,flowRate=728})
+ end})
+ --[[
+  THE FIRST THING THAT GOES WRONG, and deliberately not explained yet. The
+  reel gives one small uncommanded movement - the hose is no longer being
+  held back by anything - the crew look up, and the panel goes amber. The
+  reason arrives two shots later.
+ ]]
+ add("07d_PressureDrop",3,function() return Z.BaseCenter+V(-12.5,4.8,-23.5) end,V(2.5,5.5,13.5),{light="Exterior",advance=1,fov=46,handheld=true,cue="Machinery.LinePressureLoss",foreground={env.hoseReel},enter=function()
+  for index,worker in c.workers do Cast.react(worker,"Surprised",Z.BaseCenter+V(-12.5,5,-23.5),0.4+(index%3)*0.15) end
+  for _,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Concerned",Z.BaseCenter+V(-12.5,5,-23.5),0.5) end
+ end,update=function(a)
+  telemetry({depth=1104,linePressure=7.2-a*4.6,flowRate=734+a*280,returnDensity=1-a*0.5,state="ALARM",alert="PRESSURE DROP"})
+  -- One uncommanded lurch, then it catches: the reel runs AHEAD of the depth
+  -- it should be at, which is what losing the load feels like. Applied after
+  -- telemetry(), which sets the reel from depth and would otherwise undo it.
+  local slip=math.min(a*3,1)
+  Env.setReelRotation(env,(1104+slip*26)*0.05)
+ end})
+ -- The first real discovery. The bore is in empty space, a kilometre short of
+ -- where the signal is supposed to be.
+ add("07e_UnexpectedVoid",3.4,function() return env.boreScreen end,V(5,1,4.1),{light="Exterior",advance=1,fov=38,cue="Machinery.ReturnLost",speaker=N.Voss,text="We have no return at all. The bore is in open space.",voice="VossVoid",update=function(a)
+  telemetry({depth=1112,linePressure=1.9,flowRate=1040,returnDensity=0,signalStrength=1+a*3.4,state="FAULT",alert="UNEXPECTED VOID DETECTED"})
+ end})
+ human("07e2_LyraNotACavity",2.8,N.Lyra,"There is no cavity in this ice. There never has been.","Bore","Concerned","LyraNoCavity")
+ --[[
+  NOT GEOLOGY. Said in the instrument's own language rather than with a
+  camera feed that this project cannot make convincing: the return trace,
+  which has wandered all sequence, goes FLAT - a hard horizontal line, which
+  is what a regular surface returns and what nothing natural returns.
+ ]]
+ add("07f_NonIceMaterial",3.6,function() return env.boreScreen end,V(5.2,1.3,4.3),{light="Exterior",advance=1,fov=37,cue="Machinery.HardReturn",speaker=N.Voss,text="Something down there is returning a flat signal. A machined surface.",voice="VossNonIce",update=function(a)
+  telemetry({depth=1118,linePressure=2.1,flowRate=1012,returnDensity=0.08,signalStrength=1+a*5.4,state="FAULT"})
+  -- A regular surface returns a regular trace. Overwriting the graph with a
+  -- constant after setTelemetry has pushed its own sample is what turns the
+  -- wander of the last four shots into a straight line.
+  env.boreDisplay.pushSignal(0.72)
+  env.boreDisplay.setRow("density","NON-ICE","caution")
+  env.boreDisplay.setFooter("GEOMETRY","REGULAR","caution")
+  env.boreDisplay.setAlert("NON-ICE SURFACE  ·  RETURN × 6.4","caution")
+ end})
+ human("07f2_HaleWiden",2.4,N.Hale,"Then stop boring and start digging. I want to stand on it.","Bore","Determined","HaleWiden",{shot="Over"})
+ --[[
+  AND THEN THE CUT. Deliberately a hard jump forward in time - no shot of
+  anybody digging - so the audience arrives at the bottom of a finished
+  excavation the same way the characters arrive at a finished day's work.
+  Stepped ice benches, a scaffold down one side, rim lamps, and at the
+  bottom of it a flat black roof with bronze conduit running out of it and
+  into the ice. Nothing about that is snow disappearing to reveal a door.
+ ]]
+ add("07g_StructureExposed",5.6,function() return Z.Excavation+V(-2,-19,4) end,V(20,32,30),{light="Cut",fov=58,stage="Excavation",to=V(12,22,20),pace="Slow",cue="Music.ScientificDiscovery",enter=function()
+  ui.setTitleCard({"THE OPEN CUT","Nine days later"},"Location")
+ end,update=function(a)
+  if a>0.55 then ui.setTitleCard(nil) end
+ end,leave=function() ui.setTitleCard(nil) end})
+
+ --[[
+  ============================================================================
+  08 - THE WAY IN
+  ============================================================================
+ ]]
+ add("08a_AccessHatch",3.6,function() return env.hatchThroat end,V(7,7,9),{light="Cut",fov=48,pace="Slow",speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
+ add("08b_Descent",4.2,function() return c.lyra.head end,V(6,3,-9),{light="Cut",fov=52,focusOffset=V(0,-0.7,0),cue="Music.ArcticMystery",update=function(a)
+  Cast.walk(c.lyra,Z.Excavation+V(-3.5,-23,-6.5),Z.Excavation+V(-1.4,-23,-3.6),a)
+  Cast.walk(c.voss,Z.Excavation+V(-6.5,-22.9,-4),Z.Excavation+V(-4.2,-22.9,-2.2),a)
+ end})
+
+ --[[
+  ============================================================================
+  09 - THE ABANDONED FACILITY
+  ============================================================================
+ ]]
+ -- Looking BACK at the shaft they came down, so the only daylight in the
+ -- building is behind the three of them and the corridor runs away into the
+ -- dark behind camera. The room is established by what the expedition's own
+ -- lamps reach, which is the whole idea of the abandonedLab preset.
+ add("09a_AbandonedLabEntry",5.4,function() return Z.Door+V(0,4,36) end,V(7,4,8),{light="Lab",fov=60,stage="LabEntry",to=V(6,3.4,6.6),pace="Slow",cue="Environment.FacilityTone",enter=function()
+  ui.setTitleCard({"BENEATH THE ICE"},"Location")
+ end,update=function(a)
+  if a>0.5 then ui.setTitleCard(nil) end
+ end,leave=function() ui.setTitleCard(nil) end})
+ human("09a2_VossPower",3.2,N.Voss,"There is no power anywhere in this structure. Not a volt.","LabEntry","Amazed","VossNoPower")
+ -- One insert, not a montage of damage: a chair pushed back and turned away
+ -- from a console somebody stopped working at, frost growing across the
+ -- panel, and a tool left exactly where it was put down.
+ add("09b_DeadWorkstation",4,function() return env.deadScreen end,V(7.4,1.4,3.8),{light="Lab",fov=42,stage="Lab",pace="Slow",cue="Environment.SettlingMetal"})
+ human("09b2_LyraLeftQuickly",3,N.Lyra,"Nobody shut this down. They walked out of it.","Lab","Concerned","LyraWalkedOut")
+ --[[
+  THE GATE. Dead, and the shot is built to say so: no light on it anywhere,
+  the only illumination in frame is the two portable lamps the expedition
+  carried in, and the camera pushes in slowly rather than craning around it.
+ ]]
+ add("09c_InnerGate",5,function() return Z.Door+V(0,11,-33) end,V(5,3.5,27),{light="Lab",fov=56,stage="GateHall",to=V(4,2.8,22),pace="Slow",cue="Music.WarningTension"})
+ human("09c2_HaleOpenIt",2.2,N.Hale,"Can you open it?","GateHall","Focused","HaleOpenIt",{shot="Over"})
+ human("09c3_VossNoMechanism",3.2,N.Voss,"There is no mechanism to force. It is waiting for something.","GateHall","Concerned","VossNoMechanism")
+ --[[
+  THE KEY, found in its cradle. The pedestal is what does the work here: an
+  object lying on a floor is set dressing, and an object sitting in a shaped
+  recess cut to its own outline, beside the mechanism it belongs to, is an
+  instruction. Lyra clears the frost off it rather than picking it up, so
+  the beat is recognition rather than acquisition.
+ ]]
+ add("09d_KeyDiscovered",4.6,function() return env.keyCore end,V(4.1,2.6,4.6),{light="Lab",fov=30,pace="Slow",cue="Ancient.KeyFound",foreground={env.keyFrost},enter=function()
+  Cast.place(c.lyra,Z.Door+V(-12.4,2.8,-26.6),Z.Door+V(-16,4,-27))
+  Cast.act(c.lyra,"ClearIce","Amazed",Z.Door+V(-16.5,4.3,-27))
+ end,update=function(a)
+  -- The frost comes off the cradle as she works, and the marks on the plinth
+  -- come up out of it. They do not LIGHT: they are being cleaned.
+  env.keyFrost.Transparency=0.25+a*0.75
+  env.keyPedestalGlyphs.setProgress(a*#env.keyPedestalGlyphs.glyphs)
+  env.keyGlyphs.setProgress(a*#env.keyGlyphs.glyphs*0.4)
+ end})
+ human("09d2_LyraSameMarks",3.4,N.Lyra,"These are the same marks. On the roof, in the corridor, on the door.","GateHall","Amazed","LyraSameMarks",{enter=function()
+  Cast.place(c.lyra,Z.Door+V(-6,2.9,-25),Z.Door+V(0,8,-36))
+ end})
+ --[[
+  INSERTED, and the facility answers - faintly, and in the key first. That
+  ordering is the whole reason the unlock reads as the key causing it rather
+  than the door deciding to open.
+ ]]
+ add("09e_KeyInserted",4,function() return env.gateSocketCore end,V(3.2,1.4,3.6),{light="Lab",fov=36,cue="Ancient.KeySeats",enter=function()
+  Cast.place(c.lyra,Z.Door+V(7.4,2.9,-31),Z.Door+V(10.6,5.6,-33))
+  Cast.act(c.lyra,"Reach","Determined",Z.Door+V(10.6,5.6,-33))
+ end,update=function(a)
+  -- Lined up, then seated. The key travels into the socket on screen.
+  Env.placeKey(env,env.keyAlignCF:Lerp(env.keySeatedCF,Kit.smooth(math.min(a*1.6,1))))
+  Env.setKeyCharge(env,math.clamp((a-0.62)/0.38,0,1))
+ end})
+ --[[
+  THE CIRCUIT. One tight shot on the lock housing while the charge leaves the
+  key and starts up the pier - light travelling through a mechanism, not a
+  door switching on.
+ ]]
+ add("09f_LockResponds",3.6,function() return env.gateSocketCore end,V(4.6,2.2,5.2),{light="Lab",fov=40,pace="Slow",cue="Ancient.LockEngages",update=function(a)
+  Env.setKeyCharge(env,1)
+  Env.setGateUnlock(env,a*0.3)
+ end})
+ --[[
+  AND THE GATE. Wide enough to hold the whole mechanism, because every stage
+  of the unlock is somewhere different on it: the charge crossing the head,
+  eight dogs withdrawing, two drums turning, and only then the leaves parting.
+  Nothing here is an explosion of light - it is a machine doing a job in the
+  order a machine would do it.
+ ]]
+ add("09g_GateUnlocks",7.4,function() return Z.Door+V(0,12,-36) end,V(6,1,22),{light="Lab",fov=58,to=V(4.5,0.6,26),pace="Slow",cue="Machinery.GateUnlock",enter=function()
+  for index,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Amazed",Z.Door+V(0,10,-36),0.3+index*0.1) end
+ end,update=function(a)
+  Env.setGateUnlock(env,0.3+a*0.7)
+ end})
+
+ --[[
+  ============================================================================
+  10 - AEGIS ZERO
+  ============================================================================
+
+  Four shots, bottom to top, each one further back than the last, so the
+  reveal is about SCALE rather than about detail. The team walk into this
+  believing it may be the source of the signal; nothing in these four shots
+  tells them otherwise, and nothing tells the audience either.
+ ]]
  -- The focus is lifted clear of the floor. Aegis Zero's foot sits with its
- -- centre exactly at chamber-floor level (and some of its toe geometry below
- -- it - see AGENT.md's note on the Guardian rig, which is a separate job), so
- -- aiming at the part's own centre put the focal point in the floor and the
- -- camera check kept relocating the shot. Framing just above it shows the
- -- foot AND the floor it rests on, which is the reveal this shot is for.
- add("10_AegisFoot",2,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(10,3,14),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
- add("11_HandsHoldChains",3,function() return c.aegis.model:FindFirstChild("RightHand") end,V(12,3,17),{fov=58,focusOffset=V(0,-3,0),cue="Machinery.ChainTension",pace="Slow"})
- add("12_FullKneelingGuardian",3.5,function() return c.aegis.torso end,V(50,10,84),{fov=57,to=V(57,14,94),focusOffset=V(0,-4,0),pace="Slow"})
- human("13a_VossAwe",1.5,N.Voss,"My God.","Chamber","Amazed","VossAwe")
- human("13b_HaleAge",1.5,N.Hale,"How old is it?","Chamber","Amazed","HaleAge")
- human("13c_VossIce",2.5,N.Voss,"The surrounding ice is thousands of years old.","Chamber","Amazed","VossIce")
- human("13d_HaleWeapon",3.5,N.Hale,"Then we have discovered the greatest weapon in human history.","Chamber","Focused","HaleWeapon",{reactOn=N.Lyra})
- human("13e_LyraBuried",2.3,N.Lyra,"No. It wasn’t buried here.","Chamber","Concerned","LyraBuried")
- human("13f_LyraRemain",2,N.Lyra,"It chose to remain.","Chamber","Concerned","LyraRemain")
- -- 14–15. Pictograms carry story before the prison reveal.
- add("14a_ClearWarning",2,function() return env.mythWall end,V(3,0,16),{cue="Music.WarningTension",enter=function()
-  Cast.place(c.lyra,Z.ChamberFloor+V(-38,2.8,30),env.mythWall.Position);Cast.act(c.lyra,"ClearIce","Concerned",env.mythWall.Position)
+ -- centre at chamber-floor level and some of its toe geometry below it (a
+ -- long-standing defect in the Guardian rig, tracked separately), so aiming
+ -- at the part's own centre puts the focal point inside the floor.
+ add("10a_AegisFoot",3.4,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(10,3,14),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
+ add("10b_AegisChains",3.8,function() return c.aegis.model:FindFirstChild("RightHand") end,V(12,3,17),{fov=58,focusOffset=V(0,-3,0),cue="Machinery.ChainTension",pace="Slow"})
+ -- The chest, and the band of marks across it - which the audience has now
+ -- seen four times and cannot yet read.
+ add("10c_AegisTorso",3.4,function() return c.aegis.core end,V(15,6,26),{fov=52,focusOffset=V(0,-2,0),pace="Slow",cue="Aegis.CorePulse"})
+ add("10d_AegisFullReveal",4.8,function() return c.aegis.torso end,V(50,10,84),{fov=57,to=V(57,14,94),focusOffset=V(0,-4,0),pace="Slow"})
+
+ --[[
+  ============================================================================
+  11 - WHAT THEY THINK THEY HAVE FOUND
+  ============================================================================
+ ]]
+ human("11a_VossAwe",1.6,N.Voss,"My God.","Chamber","Amazed","VossAwe")
+ human("11b_HaleAge",1.6,N.Hale,"How old is it?","Chamber","Amazed","HaleAge")
+ human("11c_VossIce",2.6,N.Voss,"The surrounding ice is thousands of years old.","Chamber","Amazed","VossIce")
+ human("11d_HaleWeapon",3.6,N.Hale,"Then we have discovered the greatest weapon in human history.","Chamber","Focused","HaleWeapon",{reactOn=N.Lyra})
+ human("11e_LyraBuried",2.4,N.Lyra,"No. It wasn’t buried here.","Chamber","Concerned","LyraBuried")
+ human("11f_LyraRemain",2,N.Lyra,"It chose to remain.","Chamber","Concerned","LyraRemain")
+ add("11g_LyraFindsGlyphs",3.4,function() return env.mythWall end,V(4.5,1.2,15),{cue="Music.WarningTension",pace="Slow",foreground={c.lyra.model},enter=function()
+  Cast.place(c.lyra,Z.ChamberFloor+V(-38,2.8,30),env.mythWall.Position)
+  Cast.act(c.lyra,"ClearIce","Concerned",env.mythWall.Position)
+ end,update=function(a)
+  env.warningBand.setProgress(a*1.2)
  end})
- human("14b_VossRead",1.3,N.Voss,"Can you read it?","Chamber","Concerned","VossRead")
- human("14c_LyraSome",1,N.Lyra,"Some of it.","Chamber","Afraid","LyraSome")
- add("14d_GuardianNotBuried",2.3,function() return env.reliefs[1] end,V(0,0,6),{speaker=N.Lyra,text="The Guardian is not buried.",voice="LyraNotBuried"})
- human("14e_GuardianIsSeal",2.5,N.Lyra,"The Guardian is the seal.","Chamber","Afraid","LyraSeal")
- add("15_ChainImpact",2,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-9,0,12),{cue="Impacts.UndergroundImpact",handheld=true,enter=function()
-  for i,h in c.scientists do Cast.react(h,"Afraid",c.aegis.head.Position,0.3+(i%2)*0.2) end
-  for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Afraid",c.aegis.head.Position,0.9) end
+ human("11h_VossCanYouRead",1.6,N.Voss,"Can you read it?","Chamber","Concerned","VossRead")
+ --[[
+  THE PARTIAL TRANSLATION, and the most important restraint in the whole
+  sequence.
+
+  The version this replaces had Lyra say "The Guardian is the seal" out loud,
+  in the chamber, before anybody touched anything - which hands the audience
+  the ending and leaves the seal failure with nothing to reveal.
+
+  She gets three words instead, and the third one is a question. The shot is
+  held on the wall for the whole beat rather than cut between faces, so each
+  mark is physically in frame as she names it and the audience can see her
+  running out of wall before she runs out of sentence.
+ ]]
+ add("11i_PartialTranslation",8,function() return env.mythWall end,V(3.4,1,12),{fov=44,pace="Slow",to=V(3,0.8,10.5),foreground={c.lyra.model},enter=function()
+  Cast.act(c.lyra,"Scan","Afraid",env.mythWall.Position)
+ end,update=function(_,elapsed)
+  if elapsed<1.5 then
+   ui.setSubtitle(N.Lyra,"Parts of it.")
+   env.warningBand.setProgress(1.2)
+  elseif elapsed<3.2 then
+   ui.setSubtitle(N.Lyra,"Guardian.")
+   env.warningBand.setProgress(2)
+  elseif elapsed<4.9 then
+   ui.setSubtitle(N.Lyra,"Bind.")
+   env.warningBand.setProgress(3)
+  else
+   ui.setSubtitle(N.Lyra,"And something below.")
+   env.warningBand.setProgress(4)
+  end
  end})
- -- 16–19. Arrival on the lower viewing ledge; anatomical partials then wide.
- add("16_PrisonDescent",2.5,function() return c.lyra.head end,V(-5,3,-12),{stage="Prison",light="Prison",enter=function()
-  Cast.place(c.soldiers[1],Z.PrisonCenter+V(-12,3,-38),c.sovereign.head.Position)
- end,update=function(a) Cast.walk(c.lyra,Z.PrisonCenter+V(-9,5,-48),Z.PrisonCenter+V(-9,2.8,-42),a) end})
- add("17a_GiantClaw",1.5,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(-12,2,-16),{light="Prison"})
- add("17b_FoldedLimbs",1.5,function() return c.sovereign.model:FindFirstChild("RightForearm") end,V(12,3,-22),{light="Prison"})
- add("17c_ClosedEyes",1.5,function() return c.sovereign.head end,V(4,1,-17),{light="Prison"})
- add("18_PrisonAndFrozenArmy",3,function() return c.sovereign.torso end,V(75,38,-110),{light="Prison",fov=63,focusOffset=V(0,0,25),pace="Slow"})
- human("18b_SoldierUnderstands",3,N.Soldier,"The machine wasn’t protecting itself from them.","Prison","Afraid","SoldierPrison")
- human("18c_ProtectingUs",1.7,N.Lyra,"It was protecting us.","Prison","Afraid","LyraUs")
- human("18d_ScannerQuiet",2.6,N.Voss,"My scanner shows no biological activity.","Prison","Concerned","VossBiology",{action="Scan"})
- add("19_FingerMovement",1.5,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(3,1,-6),{light="Prison",cue="Alien.IceMovement",update=function(a) c.sovereign.poses.RightWrist=A(-0.2*a,0,0);Cast.evaluate(c.sovereign) end})
- human("19b_ItIsWaking",3,N.Lyra,"The ice is moving because it is waking up.","Prison","Afraid","LyraWaking")
- -- 20. Shot/reverse-shot escalation; preserve every essential argument line.
- human("20a_Disconnect",2.7,N.Lyra,"Disconnect everything. We need to leave.","Activation","Angry","LyraDisconnect")
- human("20b_HaleDiscovery",4.5,N.Hale,"We did not cross half the planet to abandon humanity’s greatest discovery.","Activation","Angry","HaleDiscovery",{reactOn=N.Lyra})
- human("20c_HoldingCreature",2.7,N.Lyra,"It is holding the creature below us.","Activation","Angry","LyraCreature")
- human("20d_OnlyDefense",3.8,N.Hale,"This machine may be the only defense humanity will ever need.","Activation","Determined","HaleDefense")
- human("20e_AlreadyDefending",2.2,N.Lyra,"It is already defending us.","Activation","Angry","LyraDefending")
- human("20f_NotACode",2,N.Lyra,"It isn’t an activation code.","Activation","Afraid","LyraCode")
- human("20g_WhatIsIt",1.4,N.Hale,"Then what is it?","Activation","Concerned","HaleCode")
- human("20h_NewGuardian",2.7,N.Lyra,"It is asking for a new guardian.","Activation","Horrified","LyraGuardian")
- -- 21–28. Physical machine activation, opposition, breach, alien response.
- add("21_CoreReceivesPower",2,function() return c.aegis.core end,V(8,1,18),{energy=0.3,cue="Aegis.CoreActivation",enter=function()
-  for i,h in c.scientists do Cast.react(h,"Surprised",c.aegis.core.Position,0.35+(i%3)*0.16) end
-  for _,h in {c.lyra,c.voss,c.hale} do Cast.react(h,"Amazed",c.aegis.core.Position,0.55) end
+ human("11j_HaleBelowWhat",1.6,N.Hale,"Below what?","Chamber","Focused","HaleBelowWhat",{shot="Over"})
+ human("11k_LyraDontKnow",2,N.Lyra,"I don’t know.","Chamber","Afraid","LyraDontKnow")
+
+ --[[
+  ============================================================================
+  12 - THEY WAKE IT
+  ============================================================================
+ ]]
+ human("12a_HaleWake",2,N.Hale,"Then we wake it and we ask it.","Chamber","Determined","HaleWake",{shot="Over"})
+ human("12b_LyraWait",3.4,N.Lyra,"Give me a week with that wall before you put a current through it.","Chamber","Concerned","LyraWait")
+ human("12c_HaleDiscovery",4.4,N.Hale,"We did not cross half the planet to abandon humanity’s greatest discovery.","Chamber","Angry","HaleDiscovery",{reactOn=N.Lyra})
+ add("12d_ExternalPower",3.8,function() return env.activationConsole end,V(7,2.4,9),{light="Chamber",fov=44,cue="Machinery.PowerConnection",foreground={env.powerReadout},enter=function()
+  -- Scientists 5 and 7, not 1-4: the first four are the command room's own
+  -- technicians, each standing in exactly one ceiling light cone back at the
+  -- base, and walking one of them into the chamber leaves that assertion -
+  -- and the room's lighting design - quietly broken.
+  Cast.place(c.scientists[5],Z.ChamberFloor+V(11.5,2.8,22.5),Z.ChamberFloor+V(9,3,24))
+  Cast.place(c.scientists[7],Z.ChamberFloor+V(6.5,2.8,22),Z.ChamberFloor+V(9,3,24))
+  Cast.setActivity(c.scientists[5],"AdjustingCable");Cast.setActivity(c.scientists[7],"TypingConsole")
+ end})
+ add("12e_CoreReceivesPower",2.6,function() return c.aegis.core end,V(8,1,18),{energy=0.3,cue="Aegis.CoreActivation",enter=function()
+  for index,scientist in c.scientists do Cast.react(scientist,"Surprised",c.aegis.core.Position,0.35+(index%3)*0.16) end
+  for _,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Amazed",c.aegis.core.Position,0.55) end
  end,update=function(a) Cast.setAegisAwaken(c.aegis,a*0.3);Light.chamber(a*0.3) end})
- add("22a_FingersTighten",1.5,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-8,1,10),{energy=0.4,cue="Aegis.ServoMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.3+a*0.15);Light.chamber(0.3+a*0.15) end})
- add("22b_ShoulderUnlocks",1.5,function() return c.aegis.model:FindFirstChild("RightUpperArm") end,V(12,2,18),{energy=0.5,cue="Aegis.ArmorMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.45+a*0.15);Light.chamber(0.45+a*0.15) end})
- add("22c_HeadAndEyes",2.5,function() return c.aegis.head end,V(9,0,22),{energy=0.7,cue="Aegis.HeadMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.6+a*0.4);Light.chamber(0.6+a*0.4) end})
- human("22d_WeDidIt",1.4,N.Hale,"We did it.","Activation","Amazed","HaleSuccess",{energy=1,reactOn=N.Lyra})
- human("23_LyraNo",1.2,N.Lyra,"No.","Activation","Horrified","LyraNo",{energy=1})
- human("23b_FightingActivation",3,N.Lyra,"Turn off the power! It is fighting the activation!","Activation","Horrified","LyraPower",{energy=1})
- add("24_SealSeparates",2,function() return Z.ChamberFloor+V(0,0.5,4) end,V(0,38,17),{energy=1,fov=57,cue="Machinery.ChainTension",update=function(a) Env.openSeal(env,a);Cast.setAegisRise(c.aegis,a) end})
- add("25_FirstChainBreak",1.5,function() return c.aegis.model:FindFirstChild("RightHand") end,V(16,3,14),{light="Emergency",cue="Machinery.ChainBreak",enter=function() Cast.breakChain(c.aegis,2,os.clock());Cast.act(c.hale,"Stumble","Horrified",c.aegis.head.Position) end})
- add("25b_SecondChainBreak",1.2,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-14,2,15),{light="Emergency",cue="Aegis.MechanicalCry",enter=function() Cast.breakChain(c.aegis,1,os.clock()) end})
- add("26_SovereignEyeOpens",2,function() return c.sovereign.eyes[1] end,V(1,0,-5),{light="Prison",cue="Alien.EyeActivation",update=function(a) Cast.setCreatureEyes(c.sovereign,a*0.5);Cast.removeIceShell(c.sovereign,a) end})
- add("26b_GuardianRises",2,function() return c.sovereign.head end,V(3,0,-18),{light="Prison",speaker=N.Sovereign,text="The Guardian rises.",cue="Alien.SovereignVoiceGuardianRises",update=function(a) Cast.setCreatureEyes(c.sovereign,0.5+a*0.5) end})
- add("27_WardenArmyActivates",2,function() return c.sovereign.torso end,V(70,30,-100),{light="Prison",fov=64,focusOffset=V(0,0,36),speaker=N.Sovereign,text="The gate is open.",cue="Alien.SovereignVoiceGateOpen",update=function(a)
-  for i,p in env.armySensors do p.Transparency=1-math.clamp(a*2-i/#env.armySensors,0,1) end
-  for i,w in c.frozenWardens do Cast.setCreatureEyes(w,math.clamp(a*2-i/#c.frozenWardens,0,1)) end
+ --[[
+  THE MATCH. The chest band lights, and it is the same four marks that were
+  on the roof of the buried structure, in the corridor, on the key, on its
+  cradle and around the gate's lock housing. This is the scene's real
+  turning point and it is carried entirely by repetition of a shape.
+ ]]
+ add("12f_ChestGlyphs",3.4,function() return c.aegis.core end,V(11,2,20),{energy=0.35,fov=46,pace="Slow",cue="Ancient.ChestBandLights",update=function(a)
+  Cast.setAegisAwaken(c.aegis,0.3+a*0.06)
+  Light.chamber(0.3+a*0.06)
+  c.aegisGlyphs.setProgress(a*#c.aegisGlyphs.glyphs)
  end})
- add("28_FirstWardenBreakout",2.5,function() return c.breakingWarden.head end,V(-4,1,-12),{light="Prison",speaker=N.Sovereign,text="The harvest may continue.",cue="Alien.SovereignVoiceHarvestContinue",update=function(a)
+ human("12g_LyraSameSystem",3.4,N.Lyra,"Those are the marks from the door. The door and this machine are one thing.","Chamber","Horrified","LyraSameSystem",{energy=0.36})
+ human("12h_NotACode",2.2,N.Lyra,"It isn’t an activation code.","Chamber","Afraid","LyraCode",{energy=0.36})
+ human("12i_WhatIsIt",1.5,N.Hale,"Then what is it?","Chamber","Concerned","HaleCode",{energy=0.36,shot="Over"})
+ human("12j_NewGuardian",2.8,N.Lyra,"It is asking for a new guardian.","Chamber","Horrified","LyraGuardian",{energy=0.36})
+ add("12k_FingersTighten",1.7,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-8,1,10),{energy=0.45,cue="Aegis.ServoMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.36+a*0.14);Light.chamber(0.36+a*0.14) end})
+ add("12l_ShoulderUnlocks",1.7,function() return c.aegis.model:FindFirstChild("RightUpperArm") end,V(12,2,18),{energy=0.55,cue="Aegis.ArmorMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.5+a*0.15);Light.chamber(0.5+a*0.15) end})
+ add("12m_HeadAndEyes",2.7,function() return c.aegis.head end,V(9,0,22),{energy=0.75,cue="Aegis.HeadMovement",update=function(a) Cast.setAegisAwaken(c.aegis,0.65+a*0.35);Light.chamber(0.65+a*0.35) end})
+ human("12n_WeDidIt",1.5,N.Hale,"We did it.","Chamber","Amazed","HaleSuccess",{energy=1,reactOn=N.Lyra})
+ --[[
+  AND THE BUILDING DISAGREES. Three things happen at once, all of them
+  BELOW the celebration: the chains come under tension, the marks set into
+  the floor around the iris change state, and something a long way down
+  answers. Nobody has said the word "seal" yet.
+ ]]
+ add("12o_ContainmentStrain",3.4,function() return Z.ChamberFloor+V(0,2,6) end,V(14,16,26),{energy=1,fov=52,handheld=true,cue="Impacts.UndergroundImpact",enter=function()
+  for index,lead in {c.lyra,c.voss,c.hale} do Cast.react(lead,"Afraid",Z.ChamberFloor+V(0,0,0),0.55+index*0.1) end
+ end,update=function(a)
+  env.sealFloorGlyphs.setProgress(a*#env.sealFloorGlyphs.glyphs)
+  Env.openSeal(env,a*0.05)
+ end})
+ --[[
+  THE PAYOFF FOR THE BORE CONSOLE. Same instrument family, same layout, same
+  units - so when the number moves by a factor of forty-seven the audience
+  knows exactly how far from normal that is, because they spent four shots
+  learning what normal looked like on the ice.
+ ]]
+ add("12p_SignalSpike",3.6,function() return env.fieldScreen end,V(2.9,0.8,2.4),{energy=1,fov=34,cue="Alien.SignalSurge",update=function(a)
+  env.fieldDisplay.setRow("signal",`× {Instrumentation.formatNumber(1+a*46.2,1)}`,if a>0.3 then "critical" else "caution")
+  env.fieldDisplay.setRow("depth",if a>0.45 then "LOCKED" else "RESOLVING","caution")
+  env.fieldDisplay.setRow("bearing",if a>0.6 then "DIRECTLY BELOW" else "—",if a>0.6 then "critical" else nil)
+  env.fieldDisplay.pushSignal(math.min(0.15+a*1.2,1))
+  if a>0.6 then env.fieldDisplay.setAlert("SOURCE IS NOT THIS OBJECT","critical") end
+ end})
+ human("12q_VossNotTheSource",3.6,N.Voss,"It was never the source. It has been sitting on top of the source.","Chamber","Horrified","VossNotSource",{energy=1})
+ human("12r_LyraRealizes",3.4,N.Lyra,"We weren’t waking a machine. We were opening a lock.","Chamber","Horrified","LyraLock",{energy=1})
+ human("12s_LyraPower",3,N.Lyra,"Turn off the power! It is fighting the activation!","Chamber","Horrified","LyraPower",{energy=1})
+
+ --[[
+  ============================================================================
+  13 - WHAT WAS UNDER IT
+  ============================================================================
+
+  The first violet frame in the film. Everything below is gated on
+  Env.setLowerSealReveal, which is the only thing anywhere that can turn the
+  lower prison's lights, the shaft glow or the frozen army's sensors up from
+  zero - so the twist cannot leak into an earlier shot by accident.
+ ]]
+ add("13a_SealCracks",3.2,function() return Z.ChamberFloor+V(0,0.5,4) end,V(0,38,17),{energy=1,fov=57,cue="Machinery.SealSeparates",foreground={env.sealIris},update=function(a)
+  Env.openSeal(env,0.05+a*0.95)
+  Cast.setAegisRise(c.aegis,a)
+  Env.setLowerSealReveal(env,a*0.45)
+ end})
+ human("13b_LyraNo",1.3,N.Lyra,"No.","Chamber","Horrified","LyraNo",{energy=1})
+ add("13c_FirstChainBreak",1.6,function() return c.aegis.model:FindFirstChild("RightHand") end,V(16,3,14),{light="Emergency",cue="Machinery.ChainBreak",enter=function()
+  Cast.breakChain(c.aegis,2,os.clock());Cast.act(c.hale,"Stumble","Horrified",c.aegis.head.Position)
+ end})
+ add("13d_SecondChainBreak",1.3,function() return c.aegis.model:FindFirstChild("LeftHand") end,V(-14,2,15),{light="Emergency",cue="Aegis.MechanicalCry",enter=function() Cast.breakChain(c.aegis,1,os.clock()) end})
+ --[[
+  LOOKING DOWN IT. The containment shaft under the iris is ordinary dark
+  structure that has been sitting there, unseen, behind a closed floor for
+  the entire film; opening the iris is the first and only time it is in
+  frame. Seven rings falling away, each smaller than the last, and a long way
+  under them, violet.
+ ]]
+ add("13e_VioletBelow",3.6,function() return Z.ChamberFloor+V(0,-6,0) end,V(0,34,14),{light="Emergency",fov=62,pace="Slow",to=V(0,26,10),cue="Alien.LowRumble",foreground={c.aegis.model},update=function(a)
+  Env.setLowerSealReveal(env,0.45+a*0.55)
+ end})
+ human("13f_HoldingCreature",2.8,N.Lyra,"It is holding something down there. It has always been holding it down there.","Chamber","Horrified","LyraCreature",{light="Emergency"})
+ -- Down in it. The expedition never goes here - the camera does.
+ add("13g_FirstAlienPartial",2.6,function() return c.sovereign.model:FindFirstChild("RightHand") end,V(-12,2,-16),{light="Prison",pace="Slow",cue="Alien.IceMovement"})
+ add("13h_SovereignEyeOpens",2.4,function() return c.sovereign.eyes[1] end,V(1,0,-5),{light="Prison",cue="Alien.EyeActivation",update=function(a) Cast.setCreatureEyes(c.sovereign,a*0.5);Cast.removeIceShell(c.sovereign,a) end})
+ add("13i_SovereignReveal",3.8,function() return c.sovereign.torso end,V(56,28,-82),{light="Prison",fov=63,focusOffset=V(0,0,25),to=V(62,32,-92),pace="Slow",cue="Music.AlienAwakening"})
+ add("13j_GuardianRises",2.2,function() return c.sovereign.head end,V(3,0,-18),{light="Prison",speaker=N.Sovereign,text="The Guardian rises.",cue="Alien.SovereignVoiceGuardianRises",update=function(a) Cast.setCreatureEyes(c.sovereign,0.5+a*0.5) end})
+ --[[
+  AND ONLY THEN THE ARMY. Held back a full shot from the Sovereign on
+  purpose: two reveals landing on the same frame cancel each other out. What
+  comes up first reads as more lights in the cavern, and then the lights turn
+  out to be in pairs.
+ ]]
+ add("13k_WardenLights",3.2,function() return c.sovereign.torso end,V(70,30,-100),{light="Prison",fov=64,focusOffset=V(0,0,36),pace="Slow",speaker=N.Sovereign,text="The gate is open.",cue="Alien.SovereignVoiceGateOpen",update=function(a)
+  for index,sensor in env.armySensors do sensor.Transparency=1-math.clamp(a*2-index/#env.armySensors,0,1) end
+  for index,warden in c.frozenWardens do Cast.setCreatureEyes(warden,math.clamp(a*2-index/#c.frozenWardens,0,1)) end
+ end})
+ add("13l_FirstWardenBreakout",2.6,function() return c.breakingWarden.head end,V(-4,1,-12),{light="Prison",speaker=N.Sovereign,text="The harvest may continue.",cue="Alien.SovereignVoiceHarvestContinue",update=function(a)
   Cast.removeIceShell(c.breakingWarden,a);Cast.setCreatureEyes(c.breakingWarden,a);Cast.setCreatureLimbUnfold(c.breakingWarden,a);Cast.setCreatureLimbUnfold(c.sovereign,a)
  end})
  -- 29. Clear short disaster beats with distinct actions.
@@ -6543,12 +9405,56 @@ check("shot list built",#shots>40,string.format("%d shots",#shots))
  and still fails the run.
 ]]
 local KNOWN_FRAMING_FLAGS={
- ["06_ThreePulses"]=true,["07b_IceFragments"]=true,["07e_SkippingClock"]=true,
- ["14d_GuardianNotBuried"]=true,["18_PrisonAndFrozenArmy"]=true,["29e_TowerFalls"]=true,
+ ["06_ThreePulses"]=true,["29e_TowerFalls"]=true,
  ["30c_TellThem"]=true,["31b_CanYouStopIt"]=true,["31e_ThousandsOfYears"]=true,
  ["31f_ProtectTogether"]=true,["37_AlienCarrier"]=true,
 }
+--[[
+ AND THE LIST MUST NOT ROT.
+
+ A waiver for a shot that no longer exists is worse than no waiver: it looks
+ like coverage and silently protects nothing. Five entries here outlived
+ their shots through the bore/facility rebuild (07b_IceFragments,
+ 07e_SkippingClock, 14d_GuardianNotBuried, 18_PrisonAndFrozenArmy) before
+ anything noticed, so the harness now checks its own waivers against the
+ real shot list.
+]]
 local flagged={}
+do
+ local byName={}
+ for _,shot in shots do byName[shot.name]=true end
+ for name in KNOWN_FRAMING_FLAGS do
+  check(string.format("framing waiver %s still names a real shot",name),byName[name]==true,
+   "this shot no longer exists - remove the waiver")
+ end
+end
+
+--[[
+ NOTHING BELOW AEGIS EXISTS UNTIL THE SEAL FAILS.
+
+ The whole discovery sequence depends on the expedition - and the audience -
+ not knowing there is a lower level until they disturb Aegis Zero's seal.
+ Env.setLowerSealReveal is the single gate for everything violet in the film
+ (the rim leak, the prison practicals, the frozen army's sensors), so this
+ checks the gate itself after every shot before 13a_SealCracks: every lower
+ light at zero, every emissive and every rim arc fully transparent. A later
+ edit that lights the prison early fails here instead of spoiling the twist.
+]]
+local SEAL_FAILS="13a_SealCracks"
+local sealFailed=false
+local function lowerSealLeak(): string?
+ for _,light in env.lowerSealLights do
+  if light.Brightness>0 then return string.format("%s brightness %.2f",light.Parent and light.Parent.Name or "light",light.Brightness) end
+ end
+ for _,list in {env.lowerSealEmissive,env.sealRim} do
+  for _,p in list do
+   if p.Transparency<1 then return string.format("%s transparency %.2f",p.Name,p.Transparency) end
+  end
+ end
+ return nil
+end
+check("the lower seal has something to conceal",#env.lowerSealLights>0 and #env.sealRim>0,
+ string.format("%d lights, %d rim arcs",#env.lowerSealLights,#env.sealRim))
 
 local leads={cast.lyra,cast.voss,cast.hale}
 local total=0
@@ -6557,6 +9463,7 @@ local tightestLens,tightestLensWhere=math.huge,""
 for index,shot in shots do
  total+=shot.duration
  local framedAsAuthored=nil
+ local framingCause=""
  local closestPerson,closestWho=math.huge,""
  local ok,err=pcall(function()
   local state=shot.enter()
@@ -6580,6 +9487,22 @@ for index,shot in shots do
     ]]
     local distance=(RBX.camera.CFrame.Position-RBX.camera.Focus.Position).Magnitude
     framedAsAuthored=math.abs(distance-shot.from.Magnitude)
+    --[[
+     AND IF IT WAS MOVED, SAY WHAT MOVED IT.
+
+     "the unstick fallback moved it" names the mechanism but not the cause,
+     which leaves whoever is fixing the shot guessing at which of a hundred
+     parts is in the way. Re-inspecting the AUTHORED position reports the
+     obstruction by full name, so a framing failure points straight at the
+     thing to move or to declare as foreground.
+    ]]
+    if framedAsAuthored>=0.01 then
+     local subject=shot.subject()
+     local target=typeof(subject)=="Vector3" and subject or subject.Position
+     local focus=target+(shot.focusOffset or Vector3.new(0,0,0))
+     local report=MOD.Camera.inspect(shot.name,subject,focus+shot.from,focus,shot.foreground)
+     framingCause=string.format("blocked by %s / inside %s",tostring(report.blocked),tostring(report.inside))
+    end
    end
    --[[
     AND THE LENS MUST NOT BE INSIDE ANYBODY.
@@ -6605,15 +9528,20 @@ for index,shot in shots do
   shot.leave(state)
  end)
  check(string.format("shot %d %s runs",index,shot.name),ok,tostring(err))
+ if shot.name==SEAL_FAILS then sealFailed=true end
+ if not sealFailed then
+  local leak=lowerSealLeak()
+  check(string.format("shot %d %s keeps the lower seal concealed",index,shot.name),leak==nil,tostring(leak))
+ end
  if ok and framedAsAuthored then
   local offFraming=framedAsAuthored>=0.01
   local inTheCast=closestPerson<1.6
   if KNOWN_FRAMING_FLAGS[shot.name] and (offFraming or inTheCast) then
-   table.insert(flagged,string.format("%s (%.2f studs off authored, lens %.2f from %s)",
-    shot.name,framedAsAuthored,closestPerson,closestWho))
+   table.insert(flagged,string.format("%s (%.2f studs off authored, lens %.2f from %s; %s)",
+    shot.name,framedAsAuthored,closestPerson,closestWho,framingCause))
   else
    check(string.format("shot %d %s plays the framing it declares",index,shot.name),not offFraming,
-    string.format("camera is %.2f studs off its authored distance - the unstick fallback moved it",framedAsAuthored))
+    string.format("camera is %.2f studs off its authored distance - the unstick fallback moved it (%s)",framedAsAuthored,framingCause))
    check(string.format("shot %d %s keeps the lens out of the cast",index,shot.name),not inTheCast,
     string.format("lens is %.2f studs from %s",closestPerson,closestWho))
   end
@@ -6631,6 +9559,8 @@ for index,shot in shots do
  end
 end
 print(string.format("   %d shots, %.1f s of runtime, %d frames executed",#shots,total,framesRun))
+check("the seal-failure shot exists",sealFailed,SEAL_FAILS.." not in the shot list, so the concealment check covered the whole film")
+check("the lower seal is actually revealed once it fails",lowerSealLeak()~=nil,"nothing violet ever became visible")
 if #flagged>0 then
  print(string.format("   %d KNOWN out-of-scope framing flags (not failures; see KNOWN_FRAMING_FLAGS):",#flagged))
  for _,entry in flagged do print("     - "..entry) end

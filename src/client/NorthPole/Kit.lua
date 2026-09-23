@@ -203,6 +203,38 @@ function Kit.beam(parent: Instance, name: string, a: Vector3, b: Vector3, width:
  return p
 end
 
+--[[
+ A blank world-space screen on one face of `host`, for callers that need to
+ drive individual elements rather than print one fixed marking.
+
+ Kit.label below is the right tool for a stencilled sign or a painted panel
+ number - one string, set once, never touched again. It is the wrong tool for
+ the bore console, where six values change independently and an alert band has
+ to appear over the top of them; that needs real child elements, which is what
+ this returns a canvas for (see Instrumentation.lua).
+
+ Passing `pixelsPerStud` sizes the canvas from the part, which suits a screen
+ whose physical size might change. Leaving it out gives a FIXED canvas the
+ caller states itself, which is what a laid-out instrument panel wants: every
+ element then sits at a known pixel position regardless of how big the part is.
+]]
+function Kit.surfaceGui(host: BasePart, face: Enum.NormalId?, pixelsPerStud: number?, canvas: Vector2?): SurfaceGui
+ local gui = Instance.new("SurfaceGui")
+ gui.Name = "WorldDisplay"
+ gui.Face = face or Enum.NormalId.Front
+ gui.LightInfluence = 0
+ gui.ZOffset = 0.02
+ if pixelsPerStud then
+  gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+  gui.PixelsPerStud = pixelsPerStud
+ else
+  gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+  gui.CanvasSize = canvas or Vector2.new(800, 600)
+ end
+ gui.Parent = host
+ return gui
+end
+
 function Kit.label(host: BasePart, text: string, color: Color3?, face: Enum.NormalId?)
  local gui = Instance.new("SurfaceGui")
  gui.Name = "PrintedMarking"

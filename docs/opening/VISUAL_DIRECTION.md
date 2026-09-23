@@ -6,6 +6,55 @@ No script was modified, no rig was rebuilt, no scene was touched to produce it.
 It is the locked plan that implementation is measured against, built one scene
 at a time in the order given in Part 6.
 
+> ### SUPERSEDED, 2026-09-23: Scenes 3 to 14 of Part 3's storyboard
+>
+> Everything from **SCENE 3 — THE SEAM** through **SCENE 14 — THE PRISONER
+> WAKES** below describes the OLD narrative order, in which the expedition
+> descends to the prison cavern and looks at the Sovereign Below (Scenes 9, 10
+> and 14's Set E material) BEFORE it attempts to activate Aegis Zero.
+>
+> That order was rebuilt. The implemented sequence is:
+>
+> > repeating signal → scientific localisation → deep bore → unexpected void →
+> > artificial material detected → excavation widened → buried access structure
+> > exposed → descent → abandoned laboratory → sealed inner gate → seal key
+> > discovered → gate unlocked → **Aegis Zero revealed** → the team believe it
+> > may explain the signal → they power it → containment weakens → the lower
+> > seal opens → the true signal surges → **only then** does anything below
+> > Aegis Zero exist for the audience.
+>
+> **The expedition must not know that an alien, a prison, a Sovereign, a Warden
+> army or a lower chamber exists until it disturbs Aegis Zero's seal**, and
+> nothing violet may appear in any frame before that. That rule overrides every
+> shot description in Scenes 3-14 below where the two disagree.
+>
+> Also superseded by the rebuild, within those scenes:
+>
+> * **Set C (2.3) is no longer an ice tunnel and an ancient door.** It is an
+>   abandoned subglacial laboratory - entry shaft, airlock, maintenance
+>   corridor, operations bay, gate hall - built from dark worn metal, slate and
+>   black composite, with oxidised bronze reserved for mechanisms. The marble,
+>   ivory and gold colonnade it used to be read as a temple, which told the
+>   audience the wrong thing about what they had found.
+> * **The drilling is a hot-water deep bore plant**, not a rotating auger:
+>   tower, hose reel, heater/pump skid, power and fuel bank, operator console.
+> * **Scene 6's "The Guardian is the seal"** is cut. Lyra reads three marks out
+>   of five - "Guardian", "Bind", "and something below" - and cannot finish the
+>   sentence. Stating the answer there leaves the containment failure with
+>   nothing to reveal.
+> * **A physical seal key** is discovered in a cradle beside the gate and
+>   inserted into it; the unlock travels through the mechanism in stages rather
+>   than the door lighting up at once.
+> * **`src/client/NorthPole/GlyphLanguage.lua`** now owns one fictional script
+>   used on the key, its pedestal, the gate, the facility walls, Aegis Zero's
+>   chest and the containment floor, and
+>   **`src/client/NorthPole/Instrumentation.lua`** owns the expedition's own
+>   diegetic screens. Part 5's emissive budget and Part 2's set notes should be
+>   read with those two modules in hand.
+>
+> Parts 0, 1, 2 (except 2.3), 4, 5, 6 and 7, and Scenes 1, 2 and 15-20, are
+> unaffected. `story.txt` is the narrative source of truth for the new order.
+
 Covers the continuous cinematic from the first frame after **Start Game** to the
 frame where **Kai receives control in his bedroom**. Target runtime **8:19**
 (499s), hold-to-skip available throughout (`Config.Cinematic.SkipHoldSeconds`).

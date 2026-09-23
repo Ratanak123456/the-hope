@@ -25,26 +25,67 @@ return {
 		IceCreaking = "",
 		-- Deep impact beneath the command room.
 		DeepIceImpact = "",
+		-- The abandoned facility's room tone: a large, cold, sealed volume.
+		-- Almost silence, with pressure. No wind - nothing moves in here.
+		FacilityTone = "",
+		-- Distant metal settling somewhere in the structure, once.
+		SettlingMetal = "",
 	},
 	Machinery = {
 		-- Seamless tracked transport engine idle.
 		VehicleEngineLoop = "",
 		-- Tracks compressing snow and suspension movement.
 		VehicleTracks = "",
-		-- Heavy drill motor startup.
-		DrillStart = "",
-		-- Seamless rotary drilling through ice.
-		DrillLoop = "",
-		-- Drill tooth striking ancient metal.
-		DrillHitsMetal = "",
-		-- Heavy ancient door mechanisms grinding open.
-		AncientDoorOpening = "",
+		-- Hot-water bore plant starting: pump spin-up, burner light-off, reel
+		-- drive engaging. Three distinct events in one cue.
+		BoreStart = "",
+		-- Seamless bore plant running: pump note, burner roar, reel creep.
+		BoreLoop = "",
+		-- Line pressure collapsing: pump note rising as the load disappears,
+		-- hose slapping the reel, one mechanical alarm. No musical sting.
+		LinePressureLoss = "",
+		-- Return flow stopping. Mostly the ABSENCE of the circulation the mix
+		-- has carried for the whole montage, plus a console alert tone.
+		ReturnLost = "",
+		-- The bore head touching something hard and flat: a bright metallic
+		-- contact quite unlike ice, reported through hose and steel.
+		HardReturn = "",
+		-- Expedition power connected to ancient hardware: cable slap,
+		-- breakers closing, an inverter note.
+		PowerConnection = "",
+		-- The containment gate unlocking: dogs withdrawing, drums turning
+		-- under load, two heavy leaves parting. Mechanical, never magical.
+		GateUnlock = "",
+		-- The chamber's iris separating under strain.
+		SealSeparates = "",
 		-- Motorized evacuation lift doors closing.
 		EmergencyDoor = "",
 		-- Massive metal links groaning under load.
 		ChainTension = "",
 		-- One huge chain snapping with ringing fragments.
 		ChainBreak = "",
+	},
+	--[[
+		ANCIENT MECHANISM. Deliberately its own category rather than more
+		Machinery cues: the opening's whole visual grammar keeps human
+		equipment, ancient equipment and the prisoner apart (see
+		Instrumentation.lua's note), and the mix has to do the same. These
+		should have no motor note and no electrical hum - resonance, stone,
+		and very old metal moving for the first time in a long time.
+	]]
+	Ancient = {
+		-- The seal key found in its cradle: frost breaking off worked metal.
+		KeyFound = "",
+		-- The key seating into the gate socket: a single deep mechanical
+		-- acceptance, then a low tone rising inside the object itself.
+		KeySeats = "",
+		-- The lock housing waking: the glyph ring taking charge, mark by
+		-- mark, then the circuit running away up the pier.
+		LockEngages = "",
+		-- Aegis Zero's chest band taking the same charge. The audience should
+		-- recognise this as the SAME sound as LockEngages, one octave lower -
+		-- it is the cue that says the door and the machine are one system.
+		ChestBandLights = "",
 	},
 	Aegis = {
 		-- Slow muted dormant core heartbeat.
@@ -83,6 +124,9 @@ return {
 		SovereignVoiceGateOpen = "",
 		-- Original Sovereign voice: The harvest may continue.
 		SovereignVoiceHarvestContinue = "",
+		-- The true signal surging as the containment fails - heard on the
+		-- expedition's own instruments before it is heard in the room.
+		SignalSurge = "",
 		-- Alien signal escaping toward space.
 		SignalTransmission = "",
 	},
@@ -121,95 +165,117 @@ return {
 		TitleTheme = "",
 	},
 	Dialogue = {
-		-- Original Hale voice: Report.
+		-- One entry per spoken line, in the order the cinematic plays them, so
+		-- this doubles as the recording script. Every id is empty until the
+		-- project has authorized recordings; the opening plays correctly silent.
+		-- Hale: Report.
 		HaleReport = "",
-		-- Original Voss voice: The signal is approximately two kilometers beneath us. Whatever is producing it is larger than anything humanity has ever built.
+		-- Voss: The signal is approximately two kilometres beneath us.
 		VossSignal = "",
-		-- Original Hale voice: A spacecraft?
+		-- Voss: Whatever is producing it is larger than anything humanity has ever built.
+		VossScale = "",
+		-- Hale: A spacecraft?
 		HaleSpacecraft = "",
-		-- Original Voss voice: Possibly.
+		-- Voss: Possibly.
 		VossPossibly = "",
-		-- Original Lyra voice: It isn’t calling us.
+		-- Lyra: It isn’t calling us.
 		LyraCalling = "",
-		-- Original Hale voice: Then what is it doing?
+		-- Hale: Then what is it doing?
 		HaleQuestion = "",
-		-- Original Lyra voice: I don’t know yet.
+		-- Lyra: I don’t know yet.
 		LyraUnknown = "",
-		-- Original Hale voice: Begin drilling.
+		-- Hale: Begin drilling.
 		HaleDrill = "",
-		-- Original Voss voice: My God.
+		-- Voss: Eleven hundred metres of ice, and the return is still clean.
+		VossBorePlan = "",
+		-- Voss: We have no return at all. The bore is in open space.
+		VossVoid = "",
+		-- Lyra: There is no cavity in this ice. There never has been.
+		LyraNoCavity = "",
+		-- Voss: Something down there is returning a flat signal. A machined surface.
+		VossNonIce = "",
+		-- Hale: Then stop boring and start digging. I want to stand on it.
+		HaleWiden = "",
+		-- Voss: It was sealed from the inside.
+		VossSealedInside = "",
+		-- Voss: There is no power anywhere in this structure. Not a volt.
+		VossNoPower = "",
+		-- Lyra: Nobody shut this down. They walked out of it.
+		LyraWalkedOut = "",
+		-- Hale: Can you open it?
+		HaleOpenIt = "",
+		-- Voss: There is no mechanism to force. It is waiting for something.
+		VossNoMechanism = "",
+		-- Lyra: These are the same marks. On the roof, in the corridor, on the door.
+		LyraSameMarks = "",
+		-- Voss: My God.
 		VossAwe = "",
-		-- Original Hale voice: How old is it?
+		-- Hale: How old is it?
 		HaleAge = "",
-		-- Original Voss voice: The surrounding ice is thousands of years old.
+		-- Voss: The surrounding ice is thousands of years old.
 		VossIce = "",
-		-- Original Hale voice: Then we have discovered the greatest weapon in human history.
+		-- Hale: Then we have discovered the greatest weapon in human history.
 		HaleWeapon = "",
-		-- Original Lyra voice: No. It wasn’t buried here.
+		-- Lyra: No. It wasn’t buried here.
 		LyraBuried = "",
-		-- Original Lyra voice: It chose to remain.
+		-- Lyra: It chose to remain.
 		LyraRemain = "",
-		-- Original Voss voice: Can you read it?
+		-- Voss: Can you read it?
 		VossRead = "",
-		-- Original Lyra voice: Some of it.
-		LyraSome = "",
-		-- Original Lyra voice: The Guardian is the seal.
-		LyraSeal = "",
-		-- Original Soldier voice: The machine wasn’t protecting itself from them.
-		SoldierPrison = "",
-		-- Original Lyra voice: It was protecting us.
-		LyraUs = "",
-		-- Original Voss voice: My scanner shows no biological activity.
-		VossBiology = "",
-		-- Original Lyra voice: The ice is moving because it is waking up.
-		LyraWaking = "",
-		-- Original Lyra voice: Disconnect everything. We need to leave.
-		LyraDisconnect = "",
-		-- Original Hale voice: We did not cross half the planet to abandon humanity’s greatest discovery.
+		-- Hale: Below what?
+		HaleBelowWhat = "",
+		-- Lyra: I don’t know.
+		LyraDontKnow = "",
+		-- Hale: Then we wake it and we ask it.
+		HaleWake = "",
+		-- Lyra: Give me a week with that wall before you put a current through it.
+		LyraWait = "",
+		-- Hale: We did not cross half the planet to abandon humanity’s greatest discovery.
 		HaleDiscovery = "",
-		-- Original Lyra voice: It is holding the creature below us.
-		LyraCreature = "",
-		-- Original Hale voice: This machine may be the only defense humanity will ever need.
-		HaleDefense = "",
-		-- Original Lyra voice: It is already defending us.
-		LyraDefending = "",
-		-- Original Lyra voice: It isn’t an activation code.
+		-- Lyra: Those are the marks from the door. The door and this machine are one thing.
+		LyraSameSystem = "",
+		-- Lyra: It isn’t an activation code.
 		LyraCode = "",
-		-- Original Hale voice: Then what is it?
+		-- Hale: Then what is it?
 		HaleCode = "",
-		-- Original Lyra voice: It is asking for a new guardian.
+		-- Lyra: It is asking for a new guardian.
 		LyraGuardian = "",
-		-- Original Hale voice: We did it.
+		-- Hale: We did it.
 		HaleSuccess = "",
-		-- Original Lyra voice: No.
-		LyraNo = "",
-		-- Original Lyra voice: Turn off the power! It is fighting the activation!
+		-- Voss: It was never the source. It has been sitting on top of the source.
+		VossNotSource = "",
+		-- Lyra: We weren’t waking a machine. We were opening a lock.
+		LyraLock = "",
+		-- Lyra: Turn off the power! It is fighting the activation!
 		LyraPower = "",
-		-- Original Hale voice: Seal the chamber!
+		-- Lyra: No.
+		LyraNo = "",
+		-- Lyra: It is holding something down there. It has always been holding it down there.
+		LyraCreature = "",
+		-- Hale: Seal the chamber!
 		HaleSeal = "",
-		-- Original Lyra voice: There is no seal anymore.
+		-- Lyra: There is no seal anymore.
 		LyraNoSeal = "",
-		-- Original Voss voice: Lyra! We have to leave!
+		-- Voss: Lyra! We have to leave!
 		VossLeave = "",
-		-- Original Lyra voice: Can you stop it?
+		-- Lyra: Can you stop it?
 		LyraStop = "",
-		-- Original Lyra voice: Then help me bury it again.
+		-- Lyra: Then help me bury it again.
 		LyraBury = "",
-		-- Original Voss voice: I’m not leaving you!
+		-- Voss: I’m not leaving you!
 		VossStay = "",
-		-- Original Lyra voice: Someone has to tell them what happened here.
+		-- Lyra: Someone has to tell them what happened here.
 		LyraTell = "",
-		-- Original Lyra voice: You protected our world for thousands of years.
+		-- Lyra: You protected our world for thousands of years.
 		LyraYears = "",
-		-- Original Lyra voice: Let us protect it together.
+		-- Lyra: Let us protect it together.
 		LyraTogether = "",
-		-- Original Lyra voice: The Guardian is not buried.
-		LyraNotBuried = "",
 	},
 	Mix = {
 		Radio = {Volume=0.65, PlaybackSpeed=1, Looped=false, SoundGroup="Dialogue"},
 		Environment = {Volume=0.22, PlaybackSpeed=1, Looped=false, SoundGroup="Environment"},
 		Machinery = {Volume=0.4, PlaybackSpeed=1, Looped=false, SoundGroup="Effects"},
+		Ancient = {Volume=0.5, PlaybackSpeed=1, Looped=false, SoundGroup="Effects"},
 		Aegis = {Volume=0.55, PlaybackSpeed=1, Looped=false, SoundGroup="Effects"},
 		Alien = {Volume=0.5, PlaybackSpeed=1, Looped=false, SoundGroup="Effects"},
 		Impacts = {Volume=0.5, PlaybackSpeed=1, Looped=false, SoundGroup="Effects"},
@@ -221,6 +287,7 @@ return {
 		["Environment.ArcticWindLoop"] = {Looped=true},
 		["Environment.GeneratorLoop"] = {Looped=true},
 		["Machinery.VehicleEngineLoop"] = {Looped=true},
-		["Machinery.DrillLoop"] = {Looped=true},
+		["Machinery.BoreLoop"] = {Looped=true},
+		["Environment.FacilityTone"] = {Looped=true},
 	},
 }

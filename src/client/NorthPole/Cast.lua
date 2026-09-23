@@ -280,6 +280,27 @@ function Cast.pose(r,name,cf)
  r.poses[name]=cf
 end
 --[[
+ Fixes an EXTERNALLY built part to a rig member, so it moves with every pose
+ the rig is driven through.
+
+ Same mechanism `attach` uses internally, exposed because Aegis Zero's chest
+ band is authored by GlyphLanguage rather than by the rig builder and still
+ has to ride the torso: `setAegisRise` pitches the waist by about seventeen
+ degrees, which on a seventeen-stud torso moves the chest several studs, and
+ a band of marks left hanging in the air where the chest used to be is worse
+ than no band at all.
+
+ Appended to r.rigid, which Cast.evaluate walks in insertion order from each
+ host's already-solved CFrame - so a host must be placed before its
+ decoration, and a joint member always is.
+]]
+function Cast.fix(r,host,item)
+ item.Anchored=true
+ local offset=host.CFrame:Inverse()*item.CFrame
+ table.insert(r.rigid,{part=item,host=host,offset=offset})
+ return item
+end
+--[[
  THE FACE, parameterised.
 
  Still the same flat block language: two eyes, two pupils, two brows and a

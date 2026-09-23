@@ -58,6 +58,7 @@ R.Random={new=makeRandom}
 --------------------------------------------------------------------------------
 
 local Methods={}
+local NILABLE={Parent=true,PrimaryPart=true,Part0=true,Part1=true,Adornee=true,Attachment0=true,Attachment1=true,CameraSubject=true,Value=true,SoundGroup=true,PlayerToHideFrom=true,RootPart=true,NextSelectionUp=true,NextSelectionDown=true,NextSelectionLeft=true,NextSelectionRight=true}
 local InstanceMT={
  __index=function(t,k)
   -- Position is derived from CFrame exactly as the engine derives it, so a
@@ -87,6 +88,18 @@ local InstanceMT={
    rawset(t,"Parent",v)
    if v then table.insert(rawget(v,"_children"),t) end
    return
+  end
+  --[[
+   ROBLOX REJECTS NIL FOR A VALUE PROPERTY; SO MUST THE SHIM.
+
+   Only Instance-reference properties accept nil in the engine. Everything
+   else - Color, Size, Brightness, Text - throws "Color3 expected, got nil".
+   The shim used to store the nil silently, so a missing colour passed every
+   offline check and then killed Env.build on the first line of the real
+   opening, which fell straight through to gameplay.
+  ]]
+  if v==nil and not NILABLE[k] then
+   error(string.format("Unable to assign property %s of %s. value expected, got nil",tostring(k),tostring(rawget(t,"Name"))),2)
   end
   rawset(t,k,v)
  end,
@@ -316,7 +329,22 @@ end
 function workspaceInstance:Raycast(origin,direction,params)
  R.rayCount+=1
  local length=direction.Magnitude
- if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.9 then
+--[[
+  THE SPLIT, tightened from 0.9 to 0.999.
+
+  At 0.9 anything steeper than about 64 degrees below horizontal took the
+  fast column probe - which answers "is there a solid anywhere in the column
+  under this ray", not "does this ray hit anything". That is the right answer
+  for the thousands of GROUND queries and a fabrication for a camera ray, and
+  it reported a shot looking down into the containment shaft as blocked by
+  "Workspace" when nothing is in the way at all.
+
+  Every genuine ground probe casts EXACTLY straight down - Cast.floorUnder
+  and Env.surfaceY both pass V(0,-length,0), and Camera.inspect's terrain
+  test passes V(0,-2,0) - so their ratio is exactly 1.0 and they all still
+  take the fast path. Nothing else does.
+ ]]
+ if R.useSolids and length>1e-6 and math.abs(direction.Y)/length<0.999 then
   return segmentHitsSolids(origin,direction,params)
  end
  if direction.Y>=0 then return nil end

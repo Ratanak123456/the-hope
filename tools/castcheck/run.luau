@@ -314,12 +314,56 @@ check("shot list built",#shots>40,string.format("%d shots",#shots))
  and still fails the run.
 ]]
 local KNOWN_FRAMING_FLAGS={
- ["06_ThreePulses"]=true,["07b_IceFragments"]=true,["07e_SkippingClock"]=true,
- ["14d_GuardianNotBuried"]=true,["18_PrisonAndFrozenArmy"]=true,["29e_TowerFalls"]=true,
+ ["06_ThreePulses"]=true,["29e_TowerFalls"]=true,
  ["30c_TellThem"]=true,["31b_CanYouStopIt"]=true,["31e_ThousandsOfYears"]=true,
  ["31f_ProtectTogether"]=true,["37_AlienCarrier"]=true,
 }
+--[[
+ AND THE LIST MUST NOT ROT.
+
+ A waiver for a shot that no longer exists is worse than no waiver: it looks
+ like coverage and silently protects nothing. Five entries here outlived
+ their shots through the bore/facility rebuild (07b_IceFragments,
+ 07e_SkippingClock, 14d_GuardianNotBuried, 18_PrisonAndFrozenArmy) before
+ anything noticed, so the harness now checks its own waivers against the
+ real shot list.
+]]
 local flagged={}
+do
+ local byName={}
+ for _,shot in shots do byName[shot.name]=true end
+ for name in KNOWN_FRAMING_FLAGS do
+  check(string.format("framing waiver %s still names a real shot",name),byName[name]==true,
+   "this shot no longer exists - remove the waiver")
+ end
+end
+
+--[[
+ NOTHING BELOW AEGIS EXISTS UNTIL THE SEAL FAILS.
+
+ The whole discovery sequence depends on the expedition - and the audience -
+ not knowing there is a lower level until they disturb Aegis Zero's seal.
+ Env.setLowerSealReveal is the single gate for everything violet in the film
+ (the rim leak, the prison practicals, the frozen army's sensors), so this
+ checks the gate itself after every shot before 13a_SealCracks: every lower
+ light at zero, every emissive and every rim arc fully transparent. A later
+ edit that lights the prison early fails here instead of spoiling the twist.
+]]
+local SEAL_FAILS="13a_SealCracks"
+local sealFailed=false
+local function lowerSealLeak(): string?
+ for _,light in env.lowerSealLights do
+  if light.Brightness>0 then return string.format("%s brightness %.2f",light.Parent and light.Parent.Name or "light",light.Brightness) end
+ end
+ for _,list in {env.lowerSealEmissive,env.sealRim} do
+  for _,p in list do
+   if p.Transparency<1 then return string.format("%s transparency %.2f",p.Name,p.Transparency) end
+  end
+ end
+ return nil
+end
+check("the lower seal has something to conceal",#env.lowerSealLights>0 and #env.sealRim>0,
+ string.format("%d lights, %d rim arcs",#env.lowerSealLights,#env.sealRim))
 
 local leads={cast.lyra,cast.voss,cast.hale}
 local total=0
@@ -328,6 +372,7 @@ local tightestLens,tightestLensWhere=math.huge,""
 for index,shot in shots do
  total+=shot.duration
  local framedAsAuthored=nil
+ local framingCause=""
  local closestPerson,closestWho=math.huge,""
  local ok,err=pcall(function()
   local state=shot.enter()
@@ -351,6 +396,22 @@ for index,shot in shots do
     ]]
     local distance=(RBX.camera.CFrame.Position-RBX.camera.Focus.Position).Magnitude
     framedAsAuthored=math.abs(distance-shot.from.Magnitude)
+    --[[
+     AND IF IT WAS MOVED, SAY WHAT MOVED IT.
+
+     "the unstick fallback moved it" names the mechanism but not the cause,
+     which leaves whoever is fixing the shot guessing at which of a hundred
+     parts is in the way. Re-inspecting the AUTHORED position reports the
+     obstruction by full name, so a framing failure points straight at the
+     thing to move or to declare as foreground.
+    ]]
+    if framedAsAuthored>=0.01 then
+     local subject=shot.subject()
+     local target=typeof(subject)=="Vector3" and subject or subject.Position
+     local focus=target+(shot.focusOffset or Vector3.new(0,0,0))
+     local report=MOD.Camera.inspect(shot.name,subject,focus+shot.from,focus,shot.foreground)
+     framingCause=string.format("blocked by %s / inside %s",tostring(report.blocked),tostring(report.inside))
+    end
    end
    --[[
     AND THE LENS MUST NOT BE INSIDE ANYBODY.
@@ -376,15 +437,20 @@ for index,shot in shots do
   shot.leave(state)
  end)
  check(string.format("shot %d %s runs",index,shot.name),ok,tostring(err))
+ if shot.name==SEAL_FAILS then sealFailed=true end
+ if not sealFailed then
+  local leak=lowerSealLeak()
+  check(string.format("shot %d %s keeps the lower seal concealed",index,shot.name),leak==nil,tostring(leak))
+ end
  if ok and framedAsAuthored then
   local offFraming=framedAsAuthored>=0.01
   local inTheCast=closestPerson<1.6
   if KNOWN_FRAMING_FLAGS[shot.name] and (offFraming or inTheCast) then
-   table.insert(flagged,string.format("%s (%.2f studs off authored, lens %.2f from %s)",
-    shot.name,framedAsAuthored,closestPerson,closestWho))
+   table.insert(flagged,string.format("%s (%.2f studs off authored, lens %.2f from %s; %s)",
+    shot.name,framedAsAuthored,closestPerson,closestWho,framingCause))
   else
    check(string.format("shot %d %s plays the framing it declares",index,shot.name),not offFraming,
-    string.format("camera is %.2f studs off its authored distance - the unstick fallback moved it",framedAsAuthored))
+    string.format("camera is %.2f studs off its authored distance - the unstick fallback moved it (%s)",framedAsAuthored,framingCause))
    check(string.format("shot %d %s keeps the lens out of the cast",index,shot.name),not inTheCast,
     string.format("lens is %.2f studs from %s",closestPerson,closestWho))
   end
@@ -402,6 +468,8 @@ for index,shot in shots do
  end
 end
 print(string.format("   %d shots, %.1f s of runtime, %d frames executed",#shots,total,framesRun))
+check("the seal-failure shot exists",sealFailed,SEAL_FAILS.." not in the shot list, so the concealment check covered the whole film")
+check("the lower seal is actually revealed once it fails",lowerSealLeak()~=nil,"nothing violet ever became visible")
 if #flagged>0 then
  print(string.format("   %d KNOWN out-of-scope framing flags (not failures; see KNOWN_FRAMING_FLAGS):",#flagged))
  for _,entry in flagged do print("     - "..entry) end

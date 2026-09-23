@@ -34,21 +34,47 @@ Eventually, the signal led them to an enormous iceberg surrounded by a permanent
 
 The iceberg was different from the ice around it. Its surface was almost black, and perfectly straight lines could be seen deep inside it.
 
-The expedition established a research base around the iceberg and began drilling.
+The expedition established a research base around the iceberg and began a deep bore.
+
+Their instruments put the source of the signal at roughly two kilometres beneath them. Nobody expected to reach it. The bore was a survey: a hot-water plant sending heated water down a hose to open a narrow hole, gather readings and establish a path toward whatever was transmitting.
 
 The deeper they went, the warmer the ice became.
 
 That should have been impossible.
 
-After several days, the drilling equipment struck metal.
+Then, at a little over eleven hundred metres - barely half the depth the signal was supposed to be coming from - the line lost pressure.
 
-The team melted an entrance through the ice and discovered an enormous underground structure. It was not a crashed aircraft or a human military base.
+The bore had entered open space.
 
-It was a tomb.
+There was no cavity in that ice. There never had been. And when the return analysis came back, it was not reporting ice at all: it was reporting a flat, regular, non-ice surface with a signal return several times stronger than anything they had measured.
+
+They had not reached the source. They had landed on something built.
+
+The expedition widened the shallow section around the void into an open cut, working down through stepped ice benches until the thing under the ice was standing in daylight: a dark composite roof, ribbed and edged in an ivory-coloured armour, with bronze conduit running out of it and away into the ice in both directions.
+
+Not a crashed aircraft. Not a human military base. Not the source of the signal either - a buried ACCESS STRUCTURE, a way in to something that continued a long way further down.
+
+Its hatch had been sealed from the inside.
+
+The Abandoned Facility
+
+Beneath the hatch was not a tomb but an installation - and one that had been WORKING. An entry shaft. An airlock whose inner door had stopped halfway and never finished closing. A maintenance corridor with conduit trenches down the middle of the floor and cable bundles hanging from the ceiling. An operations bay full of dead consoles, equipment racks, and a chair pushed back and turned away from a workstation somebody had simply walked out of. One emergency fixture, somewhere in the structure, was still alight.
+
+There was no power anywhere in it. Not a volt.
+
+Three things were carved and repeated throughout: a band of four symbols, on the roof they had cut down to, on the corridor wall, and eventually on everything else.
+
+Deep inside, past enough of the facility that they had stopped being able to see the way back, the corridor ended at a containment gate. Two segmented leaves in a heavy frame, lock dogs along the seam, drive drums over the head - massive, mechanical, ancient, and completely dead. There was no mechanism to force. It was waiting for something.
+
+Lyra found the something in a recessed cradle in the wall beside it: an open metal ring on an asymmetric spine with a small core held inside it, about the size of a forearm, cut to sit in the shaped impression it was lying in. The same four symbols were engraved along its flank and around the cradle that held it.
+
+She cleared the frost off it, lifted it out, and seated it in the socket set into the gate's right-hand pier.
+
+The key answered first. Then one mark on the socket ring, then the next. Then the charge ran away up the pier, across the head of the gate and down the other side; eight lock dogs withdrew, two drums turned, and the leaves parted.
 
 The Ancient Mecha
 
-Inside the frozen chamber, the scientists discovered the upper body of a gigantic humanoid machine.
+Inside the chamber beyond the gate, the scientists discovered the upper body of a gigantic humanoid machine.
 
 It was kneeling beneath the ice with both arms extended toward the ground. Its armor was made from an unknown ivory-colored material. Dark mechanical structures were visible between its armor plates, while faded golden lines covered its body.
 
@@ -75,29 +101,34 @@ The soldiers wanted to remove it immediately. If they could understand its techn
 
 But Lyra found something else.
 
-Behind the Mecha was a wall covered in ancient symbols.
+Behind the Mecha was a wall carrying a band of the same kind of writing, and two reliefs so eroded that only a standing figure and, beneath it, a shape that was only a mass, could still be made out.
 
-The symbols were not instructions for activating it.
+She could read three marks out of five.
 
-They were a warning:
+Guardian.
 
-When the Guardian rises, the Prisoner rises with it.
+Bind.
 
-The Guardian is not sleeping.
+And something below.
 
-The Guardian is holding the door closed.
+Below what, nobody could tell her, and she could not tell them. That is the whole of what the expedition knew. They did not know there was a lower chamber. They did not know there was a prisoner. They did not know that the machine in front of them was part of a lock, or that the gate they had just opened was the first of two.
+
+They believed they had found the source of the signal.
+
+They were standing on it.
+
+*** THIS ORDER IS LOAD-BEARING. Do not move the discovery of the Sovereign,
+*** the lower prison, the Warden army or the violet light ANYWHERE above this
+*** point. Nothing below the Aegis chamber may be seen, lit, entered or named
+*** until the containment fails later in this document. The expedition has not
+*** earned that knowledge and neither has the audience; handing it over early
+*** is what made the original version of this story have no twist left.
 
 What Was Beneath the Mecha
 
-The team followed the chains beneath Aegis Zero.
+Nobody went and looked, because nobody knew to look.
 
-Deep below the first chamber, they discovered a second creature frozen inside the ice.
-
-At first, it appeared to be another machine.
-
-Then its body moved.
-
-It was much larger than Aegis Zero. It possessed a long armored body, six folded limbs and a head covered in closed violet eyes. Black material had spread outward from its body like frozen roots.
+What was down there - and what the expedition would only discover by breaking it - was a creature much larger than Aegis Zero: a long armored body, six folded limbs, a head covered in closed violet eyes, and black material spread outward from it through the ice like frozen roots. Around it, buried in the same ice, an army.
 
 This was not one of the ordinary Wardens that would later attack Earth.
 
@@ -123,9 +154,9 @@ The Forbidden Message
 
 The soldiers refused to abandon the discovery.
 
-They ordered the research team to activate the Mecha.
+They ordered the research team to wake the Mecha and ask it what the signal was.
 
-Lyra protested. She showed them the translated warning, but the expedition commander believed she was afraid of losing control of the discovery.
+Lyra protested. She had three words off a wall and no idea what they meant, and she asked for a week with that wall before anybody put a current through the machine standing over it. The expedition commander believed she was afraid of losing control of the discovery.
 
 The team found a circular mechanism inside Aegis Zero’s chest. Above it was a short sequence of ancient symbols.
 
@@ -151,11 +182,27 @@ She read the ancient message.
 
 For the first time in thousands of years, orange light appeared inside Aegis Zero’s chest.
 
+The light ran outward through a band of four symbols across its chest plate - the same four that were on the key, on its cradle, on the corridor wall, and around the socket of the gate they had just opened.
+
+That was the moment Lyra understood that the door and the machine were one system, and that she had opened the first half of it herself.
+
 Its fingers moved.
 
 The entire frozen chamber began shaking.
 
 The scientists celebrated because they believed the activation had succeeded.
+
+Then the floor answered.
+
+The marks set into the deck around the machine's feet changed state. The chains came under tension. Something a long way below them moved, and on the expedition's own survey monitor the signal return - steady at baseline for the whole excavation - jumped by a factor of forty-seven and resolved to a single line:
+
+SOURCE POSITION: DIRECTLY BELOW.
+
+Voss understood it first, because it was his instrument: Aegis Zero had never been the source. It had been sitting on top of the source. For as long as anyone had been listening, the signal they had crossed half the planet to find had been passing THROUGH the machine, not coming from it.
+
+They had not been waking a dormant weapon.
+
+They had been opening a lock.
 
 Then the chains broke.
 
@@ -375,361 +422,253 @@ Hale looks toward the excavation monitors.
 
 GENERAL HALE: “Begin drilling.”
 
-Breaking Through the Ice
+The Deep Bore
 
-A montage shows the expedition digging deeper into the iceberg.
+A hot-water bore plant stands over a hole in the ice: a lattice tower, a hose reel the size of a truck, a heater and pump skid venting steam into the cold, a power and fuel bank, and an operator console under a canopy. Hose runs from the reel, over the crown of the tower and down into the hole. Workers move between the machines.
 
-Powerful drills cut through thick layers of ice. Workers place explosives along a newly discovered wall. Scientists examine fragments containing an unknown black material.
+This is not a drill chewing at the ice. It is a machine sending heat two kilometres down.
 
-As the excavation continues, strange events begin happening around the base:
+On the console, the telemetry is calm:
 
-Compasses rotate without stopping.
-Radios receive whispers on unused frequencies.
-Electronic clocks lose several minutes.
-Workers discover enormous claw-like marks inside the ice.
-The temperature increases as the team moves deeper.
-Several soldiers report seeing violet lights beneath the frozen ground.
+DEPTH 264.0 m
+HOSE PAYOUT 266.1 m
+WATER TEMP 81 °C
+LINE PRESSURE 7.2 MPa
+FLOW 734 L/min
+RETURN DENSITY NORMAL
+SOURCE ESTIMATE 1,984 m
 
-One worker places his hand against the ice.
+DR. VOSS: “Eleven hundred metres of ice, and the return is still clean.”
 
-Something moves on the other side.
+Hours pass. The polar light walks down toward evening, snow banks up against equipment that was clear an hour ago, the crew change over, and the depth climbs past a thousand metres.
 
-Before he can react, the movement disappears.
+Then the reel gives one small movement nobody commanded.
 
-The team eventually reaches a perfectly smooth wall beneath the natural ice.
+The workers look up. The panel turns amber:
 
-It is made from an ivory-colored metal that shows no rust or damage.
+LINE PRESSURE ↓
+PRESSURE DROP
 
-Ancient symbols cover its surface.
+Nobody says why yet, because nobody knows why yet.
 
-Lyra touches one of the symbols.
+The return stops entirely.
 
-A line of orange light travels across the wall.
+RETURN DENSITY LOST
+⚠ UNEXPECTED VOID DETECTED
 
-The entire structure begins opening.
+DR. VOSS: “We have no return at all. The bore is in open space.”
 
-Warm air escapes from the darkness beyond it.
+LYRA: “There is no cavity in this ice. There never has been.”
 
-The expedition members stare into the newly revealed passage.
+The return trace - which has wandered for the whole montage - goes flat. A hard horizontal line.
 
-They expected a frozen cave.
+NON-ICE SURFACE · RETURN × 6.4
+GEOMETRY: REGULAR
 
-Instead, they discovered a doorway.
+DR. VOSS: “Something down there is returning a flat signal. A machined surface.”
+
+GENERAL HALE: “Then stop boring and start digging. I want to stand on it.”
+
+And the source estimate never moves. It says 1,984 m through all of it. Whatever they have hit at eleven hundred, it is not what they came for.
+
+The Open Cut
+
+Cut forward. Days of work, none of it shown.
+
+A stepped excavation now descends through the ice in benches, with a scaffold down one side, work lamps on masts around the rim, and cut ice blocks stacked where they were lifted out.
+
+At the bottom of it, standing in the open: a flat black composite roof, ribbed, edged with ivory armour, with bronze conduit running out of it and vanishing into the ice walls on both sides. Ice still grips its edges where the cut stopped.
+
+Set into it is a hatch, its cover lifted out and standing on edge beside the opening. A tripod hoist stands over it. A ladder goes down into the dark.
+
+DR. VOSS: “It was sealed from the inside.”
+
+The Abandoned Facility
+
+Their lamps find a building, not a cave and not a temple.
+
+An entry shaft with the ceiling broken open above it and a cone of ice and shattered panel on the floor beneath. An airlock whose inner bulkhead stopped halfway and seized there. A maintenance corridor with a conduit trench down the middle, one grating panel lifted out and leaning against the wall, a cable bundle down across the deck, two ceiling panels missing, and a scorch mark around a junction box that failed.
+
+DR. VOSS: “There is no power anywhere in this structure. Not a volt.”
+
+In the operations bay: dead consoles with frost blooming across their panels, a chair pushed back and turned away from one of them, a tool left on a work surface, a cabinet standing open, a rack with its maintenance panel taken off and leaned against it, and an observation window looking into darkness that is never explained.
+
+LYRA: “Nobody shut this down. They walked out of it.”
+
+One cold blue emergency fixture, somewhere down the corridor, is still working after all this time. The expedition's own lamps are warm. You can tell which light belongs to the building and which they carried in.
+
+Along the corridor wall runs a band of four symbols. They have seen these before - on the roof they cut down to. They will see them again.
+
+The Inner Gate
+
+The facility ends at a containment gate.
+
+Two segmented leaves in a heavy frame, piers either side deep enough to swallow them, eight lock dogs along the seam, two drive drums over the head. Recessed channels run up one pier, across the head and down the other.
+
+It is dead. Nothing on it glows.
+
+GENERAL HALE: “Can you open it?”
+
+DR. VOSS: “There is no mechanism to force. It is waiting for something.”
+
+In a recessed alcove in the wall nearby, sitting in a cradle cut to its own outline, is an object about the size of a forearm: a broken outer ring, an asymmetric spine through it, a small dark core held inside, and four symbols engraved along its flank.
+
+The same four symbols are cut into the plinth it is sitting on.
+
+Lyra clears the frost off it.
+
+LYRA: “These are the same marks. On the roof, in the corridor, on the door.”
+
+She lifts it out, carries it to the lock housing set into the gate's right-hand pier, lines it up, and seats it.
+
+The key answers first: the core inside the ring warms. Then the first symbol on the socket ring lights. Then the next. Then the charge runs away up the pier, crosses the head of the gate and comes down the other side, one channel segment at a time - light travelling physically through a mechanism, not a door deciding to glow.
+
+Eight lock dogs withdraw into the leaves. Two drums turn under load.
+
+And the gate opens.
 
 The Frozen Chamber
 
-The scientists and soldiers enter the structure.
+Darkness. Then the expedition's lights reach into it.
 
-Their lights reveal enormous pillars disappearing into darkness. Human-made equipment looks small against the ancient architecture.
+A foot. Enormous, resting on a floor of dark stone.
 
-The walls contain carvings of giant machines fighting creatures descending from the sky.
+Chains, held in an enormous hand.
 
-Some carvings show cities being destroyed.
+A chest, and across it a band of four symbols.
 
-Others show planets covered in black roots.
-
-At the end of the passage, the team reaches a massive chamber.
-
-Their lights move across two gigantic metal feet.
-
-The camera slowly travels upward.
-
-A humanoid machine is kneeling inside the ice.
-
-Its ivory armor is cracked and damaged. Dark mechanical structures are visible between its armor plates. Faded golden lines cover its chest and arms.
-
-Several massive weapons are buried in its back.
-
-Its head is lowered.
-
-Both hands are pressed against a circular structure beneath it.
+And then, from far enough back to hold all of it: a humanoid machine kneeling in the chamber, head lowered, both hands pressed against a circular structure beneath it. Ivory armour, cracked and damaged. Dark mechanical structures between the plates. Faded golden lines. Several massive weapons buried in its back.
 
 The entire expedition becomes silent.
 
 DR. VOSS: “My God.”
 
-General Hale steps closer.
-
 GENERAL HALE: “How old is it?”
 
-Voss scans the surrounding material.
+DR. VOSS: “The surrounding ice is thousands of years old.”
 
-DR. VOSS: “The ice around this chamber is thousands of years old.”
+GENERAL HALE: “Then we have discovered the greatest weapon in human history.”
 
-Hale looks up at the machine.
+Lyra is looking at its hands.
 
-GENERAL HALE: “Then we have just discovered the oldest weapon in human history.”
+LYRA: “No. It wasn’t buried here.”
 
-Lyra does not answer.
+LYRA: “It chose to remain.”
 
-She is looking at the Mecha’s hands.
+The Warning She Cannot Finish
 
-Huge black chains are wrapped around its arms. They continue downward through the circular structure beneath it.
+Behind the machine is a wall carrying a band of five marks and two reliefs eroded almost to nothing - a standing figure, and beneath it a shape that is only a mass.
 
-The Mecha is not simply kneeling.
-
-It is holding something down.
-
-The Warning
-
-The team establishes equipment inside the chamber.
-
-Scientists scan the Mecha while soldiers photograph its armor and weapons. Engineers connect cables to a circular mechanism inside its chest.
-
-The expedition names the machine Aegis Zero.
-
-General Hale orders the engineers to prepare it for removal.
-
-Lyra continues translating the symbols around the chamber.
-
-She finds a large inscription hidden beneath layers of ice behind the Mecha.
-
-Voss joins her.
+Lyra clears the frost from the band.
 
 DR. VOSS: “Can you read it?”
 
-LYRA: “Some of it.”
+The camera holds on the wall while she works along it.
 
-She clears more ice from the wall.
+LYRA: “Parts of it.”
 
-Images appear between the symbols:
+LYRA: “Guardian.”
 
-A monstrous creature descending toward Earth.
-Aegis Zero fighting it.
-The creature lying beneath the ground.
-The Mecha kneeling above it.
-Chains connecting them.
-A final image showing both figures awakening together.
+LYRA: “Bind.”
 
-Lyra’s expression changes.
+LYRA: “And something below.”
 
-LYRA: “We need to stop the excavation.”
+GENERAL HALE: “Below what?”
 
-DR. VOSS: “Why?”
+LYRA: “I don’t know.”
 
-She reads the first translated line.
-
-LYRA: “The Guardian is not buried.”
-
-She reveals the next line.
-
-LYRA: “The Guardian is the seal.”
-
-A deep impact comes from beneath the floor.
-
-Dust falls from the ceiling.
-
-The scientists stop working.
-
-Another impact follows.
-
-This one is stronger.
-
-Somewhere below them, an enormous chain tightens.
-
-Something Else in the Ice
-
-Lyra, Voss and a small group of soldiers follow the chains through a lower passage.
-
-The walls become darker as they descend. The orange markings disappear and are replaced by black organic material frozen inside the structure.
-
-Their lights begin flickering.
-
-They reach an observation platform overlooking a deeper cavern.
-
-At first, they can see nothing but ice.
-
-Then lightning from the expedition equipment illuminates a shape inside it.
-
-A giant alien creature is frozen beneath Aegis Zero.
-
-It is larger than the Mecha.
-
-Its body is covered in black armor. Six long limbs are folded around its torso. Sharp structures extend from its back like broken wings.
-
-Its head faces upward toward the Mecha.
-
-Hundreds of smaller creatures surround it inside the ice.
-
-An entire army is buried beneath the chamber.
-
-One soldier whispers:
-
-SOLDIER: “The machine wasn’t protecting itself from them.”
-
-Lyra stares at the frozen alien.
-
-LYRA: “It was protecting us.”
-
-One of the creature’s fingers moves.
-
-Everyone steps backward.
-
-Voss checks his scanner.
-
-DR. VOSS: “No biological activity. It could have been movement in the ice.”
-
-Lyra looks at him.
-
-LYRA: “The ice is moving because it is waking up.”
+And she does not. Nobody in this chamber knows there is a lower level, a prisoner, an army, or a second seal. They have three words and a machine they believe is the discovery of the century.
 
 The Activation Order
 
-Lyra and Voss return to the main chamber and demand that the excavation stop.
+GENERAL HALE: “Then we wake it and we ask it.”
 
-General Hale refuses.
+LYRA: “Give me a week with that wall before you put a current through it.”
 
-The expedition has already connected an external power system to Aegis Zero’s chest. Engineers have discovered a sequence of symbols around its core.
+GENERAL HALE: “We did not cross half the planet to abandon humanity’s greatest discovery.”
 
-GENERAL HALE: “This machine could change human history.”
+Engineers run expedition power to a console at the machine's feet and connect it to the circular mechanism in its chest.
 
-LYRA: “It is already holding back the thing that tried to end it.”
+Orange light appears inside the core.
 
-GENERAL HALE: “Or it defeated that creature and trapped itself in the process.”
+And then the light runs outward, through a band of four symbols across the chest plate.
 
-LYRA: “You don’t understand what we found.”
+The same four that are on the key. On its cradle. On the corridor wall. Around the socket of the gate they opened to get in here.
 
-Hale looks at the ancient machine.
+LYRA: “Those are the marks from the door. The door and this machine are one thing.”
 
-GENERAL HALE: “That is why we need to wake it.”
-
-Lyra stands between Hale and the activation system.
-
-LYRA: “If the Mecha rises, the seal opens.”
-
-Hale orders the soldiers to move her.
-
-Voss attempts to disable the power system, but the engineers have already completed the connection.
-
-A mechanical translation program analyzes the activation inscription.
-
-An artificial voice begins reading the ancient words aloud.
-
-Lyra struggles against the soldiers.
-
-LYRA: “Stop the translation!”
-
-The first symbol lights up.
-
-Orange energy travels across Aegis Zero’s chest.
-
-LYRA: “It isn’t an activation code!”
-
-A second symbol activates.
-
-The chains around the Mecha begin shaking.
+LYRA: “It isn’t an activation code.”
 
 GENERAL HALE: “Then what is it?”
 
-Lyra looks at the full inscription.
-
-She finally understands its meaning.
-
 LYRA: “It is asking for a new guardian.”
 
-The final symbol activates.
+Its fingers tighten. A shoulder unlocks. Ice breaks away. Mechanical parts inside its neck begin rotating, and the machine slowly raises its head.
 
-Aegis Zero Awakens
-
-All lights inside the expedition base turn off.
-
-The chamber falls into complete darkness.
-
-The researchers can only hear the wind moving through the tunnels.
-
-Then a single orange light appears inside Aegis Zero’s chest.
-
-The light expands through the engraved lines covering its body.
-
-Its fingers move against the seal.
-
-Ice breaks away from its arms.
-
-Mechanical parts inside its neck begin rotating.
-
-Aegis Zero slowly raises its head.
-
-The researchers stare upward in silence.
-
-The Mecha’s eyes open.
-
-Golden light fills the chamber.
-
-Several scientists begin celebrating.
-
-General Hale looks at the machine with amazement.
+The scientists celebrate.
 
 GENERAL HALE: “We did it.”
 
-Lyra looks down.
+The Floor Answers
 
-The seal beneath Aegis Zero is opening.
+The chains come under tension.
+
+The marks set into the deck around the machine's feet change state.
+
+Something a long way below them moves.
+
+On the expedition's own survey monitor - the same instrument family as the bore console, the same layout, the same units the audience spent the whole excavation learning:
+
+SIGNAL RETURN × 47.2
+SOURCE DEPTH LOCKED
+SOURCE POSITION DIRECTLY BELOW
+⚠ SOURCE IS NOT THIS OBJECT
+
+DR. VOSS: “It was never the source. It has been sitting on top of the source.”
+
+LYRA: “We weren’t waking a machine. We were opening a lock.”
+
+LYRA: “Turn off the power! It is fighting the activation!”
+
+The engineers attempt to disconnect the system. The controls no longer respond.
+
+The Prisoner
+
+The seal beneath the machine separates.
+
+Violet light comes up through the opening - the first violet frame in the film.
 
 LYRA: “No.”
 
-The chains begin rising from the ground.
+One chain breaks. Then another.
 
-One breaks.
+The camera looks down through the opening, and the shaft under it goes on falling away: ring after ring of containment structure, each smaller than the last, and a long way below them, light.
 
-Then another.
+LYRA: “It is holding something down there. It has always been holding it down there.”
 
-Aegis Zero attempts to push itself back down, but the human power system continues forcing energy into its core.
+And then, down in it.
 
-The machine is not trying to stand.
+One enormous claw.
 
-It is trying to remain kneeling.
+A violet eye opening.
 
-LYRA: “Turn off the power! It’s fighting the activation!”
-
-The engineers attempt to disconnect the system.
-
-The controls no longer respond.
-
-Aegis Zero releases a distorted mechanical sound. It resembles a cry of pain.
-
-The final chain breaks.
-
-The Prisoner Awakens
-
-Far beneath the chamber, a crack forms across the frozen alien’s face.
-
-One violet eye opens.
-
-Then a second.
-
-Then six more.
-
-Every radio in the expedition activates simultaneously.
-
-Static fills the chamber.
-
-A voice begins speaking through the equipment, but it is not using any human language.
-
-The sound enters the minds of everyone inside the facility.
+And from far enough back to hold all of it: a creature much larger than Aegis Zero, a long armored body, six folded limbs, sharp structures extending from its back like broken wings, its head facing upward toward the machine above it.
 
 UNKNOWN VOICE: “The Guardian rises.”
 
-The ice surrounding the smaller creatures begins cracking.
+Only then - a full beat later, never in the same frame - smaller points of violet appear deeper in the ice around it. At first they read as more lights in the cavern.
 
-Black hands press against the frozen walls.
+Then they resolve into pairs.
 
 UNKNOWN VOICE: “The gate is open.”
 
-The giant creature unfolds one of its arms.
+An entire Warden army was sealed beneath the North Pole with it.
 
-The entire iceberg shakes.
+The first of them breaks out of the ice, unfolds its armored body and releases an unnatural scream.
 
 UNKNOWN VOICE: “The harvest may continue.”
 
-Warning alarms activate throughout the base.
-
-Scientists run toward the exits. Soldiers aim their weapons at the lower tunnels. Emergency lights cover the chamber in red.
-
-The first smaller alien breaks through the ice.
-
-It crawls into the light, unfolds its armored body and releases an unnatural scream.
-
-More violet eyes open behind it.
+Warning alarms activate throughout the base. Scientists run toward the exits. Soldiers aim their weapons at the lower tunnels. Emergency lights cover the chamber in red.
 
 General Hale finally understands what they have done.
 

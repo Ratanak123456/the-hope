@@ -75,40 +75,50 @@ local function applyMood(props: { [string]: any }, atmosphere: { [string]: any }
 	end
 end
 
--- Storm-lit Arctic exterior: pale, low sun through heavy cloud, blue-gray
--- shift, tight fog so the map boundary never shows.
-function NPLighting.exterior()
+--[[
+	Storm-lit Arctic exterior: pale, low sun through heavy cloud, blue-grey
+	shift, tight fog so the map boundary never shows.
+
+	`advance` (0..1) walks the polar afternoon toward evening across the
+	drilling montage. It exists so "hours have passed" can be told by the
+	light rather than by a caption or a spinning clock: the sun drops, the
+	scene cools and darkens, and by the end the site's own floodlights are
+	doing most of the work. Called with no argument it is the same afternoon
+	preset every other exterior shot uses.
+]]
+function NPLighting.exterior(advance: number?)
+	local a = math.clamp(advance or 0, 0, 1)
 	applyMood({
 		-- A low polar sun late in the day rather than flat midday overcast.
 		-- The site's floodlights, the route beacons and the trucks' headlamps
 		-- are all meant to read as light sources; under a 1.6-brightness
 		-- noon sky none of them registered at all, and the snowfield was one
 		-- undifferentiated white plane with no sense of scale.
-		ClockTime = 16.9,
+		ClockTime = 16.9 + 3.6 * a,
 		GeographicLatitude = 78,
-		Brightness = 1.15,
-		ExposureCompensation = -0.12,
-		Ambient = Color3.fromRGB(52, 60, 74),
-		OutdoorAmbient = Color3.fromRGB(96, 110, 130),
-		ColorShift_Top = Color3.fromRGB(38, 40, 46),
+		Brightness = 1.15 - 0.42 * a,
+		ExposureCompensation = -0.12 - 0.06 * a,
+		Ambient = Color3.fromRGB(52, 60, 74):Lerp(Color3.fromRGB(34, 40, 54), a),
+		OutdoorAmbient = Color3.fromRGB(96, 110, 130):Lerp(Color3.fromRGB(58, 68, 88), a),
+		ColorShift_Top = Color3.fromRGB(38, 40, 46):Lerp(Color3.fromRGB(46, 36, 38), a),
 		ColorShift_Bottom = Color3.fromRGB(10, 14, 22),
-		FogColor = Color3.fromRGB(126, 140, 158),
-		FogStart = 60,
-		FogEnd = 320,
+		FogColor = Color3.fromRGB(126, 140, 158):Lerp(Color3.fromRGB(74, 82, 100), a),
+		FogStart = 60 - 22 * a,
+		FogEnd = 320 - 90 * a,
 	}, {
-		Haze = 3.2,
-		Glare = 0.1,
-		Color = Color3.fromRGB(180, 190, 200),
-		Decay = Color3.fromRGB(120, 132, 148),
+		Haze = 3.2 + 0.6 * a,
+		Glare = 0.1 * (1 - a),
+		Color = Color3.fromRGB(180, 190, 200):Lerp(Color3.fromRGB(122, 130, 148), a),
+		Decay = Color3.fromRGB(120, 132, 148):Lerp(Color3.fromRGB(64, 72, 90), a),
 	}, {
 		Cover = 0.85,
-		Density = 0.6,
-		Color = Color3.fromRGB(150, 156, 164),
+		Density = 0.6 + 0.12 * a,
+		Color = Color3.fromRGB(150, 156, 164):Lerp(Color3.fromRGB(96, 102, 116), a),
 	}, {
 		Brightness = -0.02,
-		Contrast = 0.1,
+		Contrast = 0.1 + 0.04 * a,
 		Saturation = -0.35,
-		TintColor = Color3.fromRGB(214, 222, 232),
+		TintColor = Color3.fromRGB(214, 222, 232):Lerp(Color3.fromRGB(186, 196, 218), a),
 	})
 end
 
@@ -184,6 +194,66 @@ function NPLighting.ancientInterior()
 		Contrast = 0.12,
 		Saturation = -0.2,
 		TintColor = Color3.fromRGB(200, 226, 228),
+	})
+end
+
+--[[
+	THE ABANDONED FACILITY.
+
+	Not the ancient-interior preset, which is a cool teal cave mood built for
+	a passage carved out of ice. This is a BUILDING - flat dark metal, black
+	composite, frost - and it has to read as one: architecture legible, deep
+	shadows that still hold shape, and no ambient bright enough to pretend the
+	place is powered.
+
+	Three light sources are meant to be tellable apart on screen, which is the
+	whole job of this preset:
+
+	  * the building's own surviving emergency fixtures, COLD cyan, weak, and
+	    almost all dead - one per room at most;
+	  * the expedition's portable lamps, WARM, aimed, and obviously carried in;
+	  * the daylight falling down the entry shaft, which is the only thing in
+	    here that is neither.
+
+	So ambient is deliberately neutral and low rather than tinted: a tinted
+	fill would wash both of the other two into the same colour and the contrast
+	that tells the story would be gone. Bloom is held down hard, because a
+	single Neon strip in a dark room is exactly the condition that blooms into
+	a glowing smear.
+
+	Fog is close - it is a cold, still, sealed volume - but starts far enough
+	back that a face at conversation distance is never veiled.
+]]
+function NPLighting.abandonedLab()
+	applyMood({
+		ClockTime = 0,
+		Brightness = 0.5,
+		ExposureCompensation = -0.04,
+		-- Neutral, slightly cool, and above the camera's own readability
+		-- threshold (Camera.inspect wants an ambient average over 0.16) so
+		-- the architecture never collapses to a black screen.
+		Ambient = Color3.fromRGB(50, 54, 60),
+		OutdoorAmbient = Color3.fromRGB(28, 32, 38),
+		ColorShift_Top = Color3.fromRGB(8, 10, 12),
+		ColorShift_Bottom = Color3.fromRGB(3, 4, 6),
+		FogColor = Color3.fromRGB(12, 15, 18),
+		FogStart = 26,
+		FogEnd = 130,
+	}, {
+		Density = 0.22,
+		Haze = 2.1,
+		Glare = 0,
+		Color = Color3.fromRGB(96, 110, 122),
+		Decay = Color3.fromRGB(24, 30, 36),
+	}, nil, {
+		Brightness = -0.02,
+		Contrast = 0.15,
+		Saturation = -0.24,
+		TintColor = Color3.fromRGB(226, 234, 238),
+	}, {
+		Intensity = 0.06,
+		Size = 12,
+		Threshold = 2.2,
 	})
 end
 

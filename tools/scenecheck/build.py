@@ -13,13 +13,13 @@ castcheck = root / "tools/castcheck"
 
 SETS = {
     "opening": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
-                 "Env", "CharacterAppearance", "Cast", "Lighting",
+                 "GlyphLanguage", "Instrumentation", "Env", "CharacterAppearance", "Cast", "Lighting",
                  "PerformanceDirector", "Camera", "Sequences"], "dump.luau"),
     "menu": (["Signal", "Config", "Palette", "AegisRig", "Responsive", "Settings",
               "MenuScene"], "menu.luau"),
     # Every human in the opening, on a neutral stage. See lineup.luau.
     "lineup": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
-                "Env", "CharacterAppearance", "Cast", "Lighting",
+                "GlyphLanguage", "Instrumentation", "Env", "CharacterAppearance", "Cast", "Lighting",
                 "PerformanceDirector", "Camera", "Sequences"], "lineup.luau"),
 }
 PATHS = {
@@ -34,6 +34,8 @@ PATHS = {
     "VehicleMotion": "src/client/NorthPole/VehicleMotion.lua",
     "CharacterAppearance": "src/client/NorthPole/CharacterAppearance.lua",
     "Sequences": "src/client/NorthPole/Sequences.lua",
+    "GlyphLanguage": "src/client/NorthPole/GlyphLanguage.lua",
+    "Instrumentation": "src/client/NorthPole/Instrumentation.lua",
 }
 
 which = sys.argv[1] if len(sys.argv) > 1 else "opening"
