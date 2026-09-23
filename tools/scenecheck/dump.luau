@@ -39,8 +39,14 @@ local CAPTURES={
  {"07c_BoreProgress",1.0},
  {"07d_PressureDrop",0.5},
  {"07e_UnexpectedVoid",0.5},
- {"07g_StructureExposed",0.0},
- {"07g_StructureExposed",1.0},
+ -- The excavation: gantry established (scale), started, cutting, the roof
+ -- coming through, and the finished cut.
+ {"07g_ExcavationGantryEstablished",0.5},
+ {"07h_ExcavationBegins",1.0},
+ {"07i_CutterDescends",0.6},
+ {"07j_StructureRoofExposed",0.0},
+ {"07j_StructureRoofExposed",1.0},
+ {"07k_AccessTunnelRevealed",0.5},
  {"08a_AccessHatch",0.5},
  {"09a_AbandonedLabEntry",0.5},
  {"09b_DeadWorkstation",0.5},

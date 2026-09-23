@@ -1708,6 +1708,68 @@ are in `docs/visual-rebuild/scenecheck/` (07a-13i). Seen offline and worth a
 look in Studio: Aegis in `10d_AegisFullReveal` reads as standing rather than
 kneeling (the long-standing Guardian rig pose gap, not touched here).
 
+## 2026-09-23 session (continued): the excavation gantry, IN STUDIO
+
+Scope: only the transition from "the bore detects a void" to "the access
+structure is exposed". Started from HEAD `750f993`. The bore FOUND the
+structure; a second, much larger machine now EXPOSES it.
+
+**New: `src/client/NorthPole/ExcavationRig.lua`** (`--!strict`) - the gantry
+only. Two crawler bases (x=+-16, 20 long, on timber crane mats), two braced
+towers, a twin box-girder bridge (deck at y=32.6), machinery houses to 36.6 and
+light masts to ~39, a carriage that travels +-8 along the bridge, a telescoping
+mast, and a ~10 x 8.6 x 10 cutter head (thermal body, two support rings, six
+raked cutting sectors, hose manifold, extraction stub, hi-vis rotation mark).
+Service walkway with rails along the bridge, an operator station and ladder on
+the left tower, festoon and mast hoses that are re-placed from their end points
+every frame, a slush return line down the right tower to a separator and a
+discharge to the spoil heap, six SpotLight work lights, two steam emitters.
+Overall ~36 wide x 20 deep x ~39 tall - about seven people high. Painted
+muted ochre on purpose, so it never merges with the grey bore plant. Motion is
+three numbers (carriage, depth, spin) applied through `Kit.rigid` from stored
+rest transforms - never accumulated.
+
+**`Env.lua`:** the three-bench pit is replaced by an opening 26 wide x 36 long
+(`Env.Cut`), snow over ice down to a trench floor at -16, roof top at -12:
+kerfed cut faces, cutter-pass ledges, soldier piles and walers, drainage
+trenches with pumps, a scaffold stair down the -Z end, barriers, survey stakes,
+a spoil heap, rim lamps, a ground ring out to 160 studs. The roof now has a
+straight full-width seam, ribs, the dead glyph band, side walls and buttresses
+visible in the trenches, and a raised armoured coaming round the hatch
+(`env.accessBulkhead`, hatch at z=11.5). Six ice-cover strips are lowered by
+`Env.setExcavationProgress` (centre first, ends last); the hoist, power station,
+lamps and crates on the roof are hidden until progress is 1.
+`Env.cutterDepthFor` puts the head's teeth on the ice surface. A second copy of
+the bore plant (`env.surveyPlant`, built into a throwaway table) stands beside
+the gantry for the scale comparison.
+
+**A pre-existing bug fixed on the way:** the bore tower's diagonal braces scaled
+WORLD positions instead of corner offsets and then added the bore origin again,
+so the real plant has had sixteen hair-thin beams ~8,000 studs tall since the
+bore rebuild. Invisible at x=0; the copy at x~786 threw them sideways into the
+lab and chamber stages, which is how castcheck found it.
+
+**Shots:** `07g_StructureExposed` is replaced by `07g_ExcavationGantryEstablished`,
+`07h_ExcavationBegins`, `07i_CutterDescends`, `07j_StructureRoofExposed` (new
+line, Voss: "Straight edges. Seams. Somebody built this."), and
+`07k_AccessTunnelRevealed`; `08a`/`08b` re-aimed at the new hatch. New stage
+`ExcavationRim` (the leads behind the rim barrier); `Excavation` marks moved to
+the new roof. Crew are placed on the machine for scale (walkway, operator
+station, beside a crawler, far rim, a scientist at the barrier). New audio
+names: `Machinery.GantryIdle/GantryStart/CutterLoad`, `Dialogue.VossBuilt`.
+110 shots, 339.8s.
+
+**Verified in Studio** (Play, debug start at shot 23): 07g-08b all play
+exactly as authored (`corrected:false`), no mid-shot corrections, no
+`[ActorValidation]` warnings. Frames in
+`docs/visual-rebuild/2026-09-23-excavation/`. The excavation plays at night
+under the gantry's work lights (the `Cut` preset is `Light.exterior(1)`), which
+reads well for scale but leaves the far set dark. castcheck 49,914 / 0
+failures; check.sh clean.
+
+**Not re-watched after the last edit:** the 07j fix moving the far-rim worker out
+of frame (from straight above he read as lying down) is verified offline only.
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22

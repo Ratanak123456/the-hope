@@ -50,6 +50,15 @@ return {
 		-- The bore head touching something hard and flat: a bright metallic
 		-- contact quite unlike ice, reported through hose and steel.
 		HardReturn = "",
+		-- The excavation gantry at idle: a big diesel power pack ticking over
+		-- and the hot-water plant's circulation, heard from the rim.
+		GantryIdle = "",
+		-- The gantry starting work: carriage drive engaging, hoist brakes
+		-- releasing, the cutter head spinning up and steam starting.
+		GantryStart = "",
+		-- The cutter under load in the ice: a heavy grinding hiss, slush
+		-- pumping away through the return line.
+		CutterLoad = "",
 		-- Expedition power connected to ancient hardware: cable slap,
 		-- breakers closing, an inverter note.
 		PowerConnection = "",
@@ -196,6 +205,8 @@ return {
 		VossNonIce = "",
 		-- Hale: Then stop boring and start digging. I want to stand on it.
 		HaleWiden = "",
+		-- Voss: Straight edges. Seams. Somebody built this.
+		VossBuilt = "",
 		-- Voss: It was sealed from the inside.
 		VossSealedInside = "",
 		-- Voss: There is no power anywhere in this structure. Not a volt.

@@ -252,6 +252,7 @@ R.Random={new=makeRandom}
 --------------------------------------------------------------------------------
 
 local Methods={}
+local NILABLE={Parent=true,PrimaryPart=true,Part0=true,Part1=true,Adornee=true,Attachment0=true,Attachment1=true,CameraSubject=true,Value=true,SoundGroup=true,PlayerToHideFrom=true,RootPart=true,NextSelectionUp=true,NextSelectionDown=true,NextSelectionLeft=true,NextSelectionRight=true}
 local InstanceMT={
  __index=function(t,k)
   -- Position is derived from CFrame exactly as the engine derives it, so a
@@ -281,6 +282,18 @@ local InstanceMT={
    rawset(t,"Parent",v)
    if v then table.insert(rawget(v,"_children"),t) end
    return
+  end
+  --[[
+   ROBLOX REJECTS NIL FOR A VALUE PROPERTY; SO MUST THE SHIM.
+
+   Only Instance-reference properties accept nil in the engine. Everything
+   else - Color, Size, Brightness, Text - throws "Color3 expected, got nil".
+   The shim used to store the nil silently, so a missing colour passed every
+   offline check and then killed Env.build on the first line of the real
+   opening, which fell straight through to gameplay.
+  ]]
+  if v==nil and not NILABLE[k] then
+   error(string.format("Unable to assign property %s of %s. value expected, got nil",tostring(k),tostring(rawget(t,"Name"))),2)
   end
   rawset(t,k,v)
  end,
@@ -719,7 +732,7 @@ typeof=function(value)
  end
  return rawTypeof(value)
 end
-RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,GlyphLanguage=true,Instrumentation=true,Env=true,CharacterAppearance=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
+RBX.install({Signal=true,Config=true,Palette=true,Settings=true,Kit=true,VehicleMotion=true,GlyphLanguage=true,Instrumentation=true,ExcavationRig=true,Env=true,CharacterAppearance=true,Cast=true,Lighting=true,PerformanceDirector=true,Camera=true,Sequences=true})
 MOD.Signal=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -2700,6 +2713,508 @@ end
 return Instrumentation
 
 end)()
+MOD.ExcavationRig=(function()
+local script={Parent=ParentProxy}
+local require=req
+--!strict
+--[[
+ THE EXCAVATION GANTRY.
+
+ The deep-bore plant FOUND the structure: a hose a few centimetres wide that
+ fell into a void at eleven hundred metres. Nothing that size can dig a hole a
+ person can walk into, and the old sequence skipped straight from one to the
+ other. This is the second machine - the one the expedition had flown in once
+ they knew what they had hit - and it exists to make that step legible: the
+ bore is a survey instrument, this is heavy plant.
+
+ So the whole point of it is SCALE against the people standing next to it.
+ Roughly, with a Roblox human at ~5.6 studs:
+
+     overall height   ~39 studs  (bridge deck 32.6, machinery houses to 36.6,
+                                  light masts to ~39)   ~7 people
+     overall width     36 studs  (crawler outer faces x = +-18.2)
+     depth (Z)         20 studs  (crawler length)
+     cutter head       ~10 x 8.6 x 10                   ~1.5 people tall
+
+ Five readable masses, not a thousand bolts - the camera is never close
+ enough to see a bolt:
+
+     BRIDGE / GANTRY  ===============================   (two box girders)
+         [carriage] <- travels along the bridge (X)
+             |  telescoping mast
+         [cutter head] <- descends, rotates
+   [L tower]                                 [R tower]
+   [L crawler]        EXCAVATION             [R crawler]
+
+ Everything that moves is placed from a transform stored at build time
+ (Kit.rigid), never from its own previous frame: carriage position, cut depth
+ and cutter rotation are three numbers, and the geometry is a pure function of
+ them. Setting the same numbers twice gives the same picture, which is what a
+ shot that can be scrubbed and re-entered needs.
+
+ Deliberately painted ochre rather than the bore plant's greys: the two
+ machines share a frame in the establishing shot, and they must read as two
+ machines - a small grey survey plant and a large yellow excavator - rather
+ than one pile of equipment.
+]]
+local Kit = require(script.Parent.Kit)
+
+local ExcavationRig = {}
+
+local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
+
+export type Handle = {
+	model: Model,
+	leftBase: Model,
+	rightBase: Model,
+	gantry: Model,
+	carriage: Model,
+	cutter: Model,
+	-- Camera subjects.
+	cutterBody: BasePart,
+	carriageBody: BasePart,
+	-- Where people stand, in world space (floor level, not root height).
+	walkwayFloor: Vector3,
+	operatorFloor: Vector3,
+
+	setCutterSpin: (revolutions: number) -> (),
+	setCarriagePosition: (t: number) -> (),
+	setCutDepth: (amount: number) -> (),
+	setSteam: (amount: number) -> (),
+	setWorkLights: (amount: number) -> (),
+}
+
+-- Dimensions, relative to `origin` (the centre of the pit at ground level).
+ExcavationRig.Dimensions = {
+	baseX = 16, -- crawler centreline, either side
+	baseWidth = 4.4,
+	baseLength = 20,
+	deckY = 32.6, -- top of the bridge girders
+	houseTopY = 36.6,
+	carriageTravel = 8, -- +- along the bridge
+	cutTravel = 12, -- how far the head descends at depth 1
+	headRestY = 5.4, -- head centre at depth 0 (bottom clear of the ice)
+	headSize = V(10, 8.6, 10),
+}
+
+local D = ExcavationRig.Dimensions
+
+type Hose = { segments: { BasePart }, width: number }
+
+local function box(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
+	local p = Kit.part({ name = name, size = size, cframe = cf, color = color, material = material or Enum.Material.Metal, shadow = true })
+	p.Parent = parent
+	return p
+end
+
+local function drum(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, axis: string?): Part
+	local p = Kit.cylinder({ name = name, size = size, cframe = cf, color = color, material = Enum.Material.Metal, shadow = true }, axis)
+	p.Parent = parent
+	return p
+end
+
+local function beam(parent: Instance, name: string, a: Vector3, b: Vector3, width: number, color: Color3): BasePart
+	local p = Kit.beam(parent, name, a, b, width, color)
+	p.CastShadow = true
+	return p
+end
+
+local function sagPoint(a: Vector3, b: Vector3, t: number, sag: number): Vector3
+	return a:Lerp(b, t) - V(0, math.sin(t * math.pi) * sag, 0)
+end
+
+-- A static hanging cable or pipe run.
+local function hang(parent: Instance, name: string, a: Vector3, b: Vector3, sag: number, width: number, color: Color3, pieces: number)
+	local previous = a
+	for i = 1, pieces do
+		local nextPoint = sagPoint(a, b, i / pieces, sag)
+		local p = Kit.beam(parent, name, previous, nextPoint, width, color, Enum.Material.SmoothPlastic)
+		p.CanQuery = false
+		previous = nextPoint
+	end
+end
+
+-- A hose whose ends move. Segments are created once and re-placed from the two
+-- end points every time, never from where they were last frame.
+local function newHose(parent: Instance, name: string, width: number, color: Color3, pieces: number): Hose
+	local hose: Hose = { segments = {}, width = width }
+	for _ = 1, pieces do
+		local p = Kit.part({ name = name, size = V(width, width, 1), color = color, material = Enum.Material.SmoothPlastic })
+		p.CanQuery = false
+		p.Parent = parent
+		table.insert(hose.segments, p)
+	end
+	return hose
+end
+
+local function placeHose(hose: Hose, a: Vector3, b: Vector3, sag: number)
+	local n = #hose.segments
+	for i, segment in hose.segments do
+		local p0 = sagPoint(a, b, (i - 1) / n, sag)
+		local p1 = sagPoint(a, b, i / n, sag)
+		local length = math.max((p1 - p0).Magnitude, 0.05)
+		segment.Size = V(hose.width, hose.width, length + hose.width * 0.5)
+		segment.CFrame = CFrame.lookAt((p0 + p1) / 2, p1)
+	end
+end
+
+function ExcavationRig.build(parent: Instance, origin: Vector3, palette: any): Handle
+	local C = palette
+	-- Heavy-plant ochre, deliberately a long way from the bore plant's greys and
+	-- kept muted: a saturated yellow the size of a building would be the
+	-- brightest thing in every frame it is in.
+	local PAINT = Color3.fromRGB(150, 112, 54)
+	local PAINT_DARK = Color3.fromRGB(96, 74, 42)
+	local STEEL = C.metal :: Color3
+	local DARK = C.dark :: Color3
+	local RUBBER = C.rubber :: Color3
+	local HULL = C.hullDark :: Color3
+	local HIVIS = C.hiVis :: Color3
+	local WARM = C.warm :: Color3
+
+	local o = origin
+	local model = Kit.model("ExcavationGantry", parent)
+
+	------------------------------------------------------------------------------
+	-- 1-2. CRAWLER BASES. A track either side of each, a deck, and a machinery
+	-- pack: the left carries the power unit, the right the slush separator.
+	------------------------------------------------------------------------------
+	local function crawler(side: number): Model
+		local base = Kit.model(side < 0 and "LeftCrawlerBase" or "RightCrawlerBase", model)
+		local x = side * D.baseX
+		for _, offset in { -1.45, 1.45 } do
+			box(base, "TrackFrame", V(1.5, 2.2, D.baseLength), CF(o + V(x + offset, 1.1, 0)), RUBBER)
+			for _, z in { -D.baseLength / 2 + 1.1, D.baseLength / 2 - 1.1 } do
+				drum(base, "TrackSprocket", V(1.6, 2.6, 2.6), CF(o + V(x + offset, 1.3, z)), DARK)
+			end
+			-- Track pads, sparse: enough that the band reads as a crawler track
+			-- from a wide shot, not so many that it is a comb.
+			for i = 1, 7 do
+				box(base, "TrackGrouser", V(1.6, 0.22, 0.5), CF(o + V(x + offset, 2.25, -D.baseLength / 2 + i * D.baseLength / 8)), DARK)
+			end
+		end
+		box(base, "CrawlerDeck", V(D.baseWidth + 0.8, 1.1, D.baseLength - 3), CF(o + V(x, 2.75, 0)), PAINT_DARK)
+		-- Timber crane mats under the tracks: the ground at the lip of a cut is
+		-- not trusted with this much weight, and they say so.
+		for i = -2, 2 do
+			box(base, "CraneMat", V(D.baseWidth + 1.6, 0.4, 3.6), CF(o + V(x, 0.15, i * 4)), Color3.fromRGB(78, 62, 44), Enum.Material.Wood)
+		end
+		if side < 0 then
+			box(base, "PowerUnit", V(3.6, 3.4, 6.2), CF(o + V(x, 5, 5.2)), HULL)
+			box(base, "PowerUnitRoof", V(3.9, 0.3, 6.5), CF(o + V(x, 6.85, 5.2)), DARK)
+			drum(base, "ExhaustStack", V(3, 0.5, 0.5), CF(o + V(x - 1.1, 8.2, 7)), DARK, "y")
+			local grille = box(base, "PowerUnitGrille", V(0.1, 2.2, 4.6), CF(o + V(x + side * 1.85, 5, 5.2)), DARK)
+			grille.CanQuery = false
+		else
+			drum(base, "SlushSeparator", V(6.4, 3.4, 3.4), CF(o + V(x, 5.1, 5.4)), HULL, "z")
+			drum(base, "SeparatorHopper", V(2.6, 2.6, 2.6), CF(o + V(x, 7.6, 3.4)), STEEL, "y")
+		end
+		return base
+	end
+	local leftBase = crawler(-1)
+	local rightBase = crawler(1)
+
+	------------------------------------------------------------------------------
+	-- 3. THE GANTRY: two towers and the bridge between them.
+	------------------------------------------------------------------------------
+	local gantry = Kit.model("Gantry", model)
+	local LEG_BOTTOM, LEG_TOP = 3.3, 30
+	for _, side in { -1, 1 } do
+		local x = side * D.baseX
+		for _, z in { -1, 1 } do
+			beam(gantry, "TowerLeg", o + V(x, LEG_BOTTOM, z * 7.2), o + V(x, LEG_TOP + 1, z * 3.4), 1.7, PAINT)
+		end
+		-- Girts and one diagonal per bay: a braced frame, not a ladder.
+		local levels = { 9.5, 16.5, 23.5 }
+		for index, y in levels do
+			local t = (y - LEG_BOTTOM) / (LEG_TOP + 1 - LEG_BOTTOM)
+			local half = 7.2 + (3.4 - 7.2) * t
+			beam(gantry, "TowerGirt", o + V(x, y, -half), o + V(x, y, half), 0.8, PAINT_DARK)
+			local previousY = index == 1 and LEG_BOTTOM + 0.6 or levels[index - 1]
+			local pt = (previousY - LEG_BOTTOM) / (LEG_TOP + 1 - LEG_BOTTOM)
+			local previousHalf = 7.2 + (3.4 - 7.2) * pt
+			local flip = index % 2 == 0 and 1 or -1
+			beam(gantry, "TowerBrace", o + V(x, previousY, flip * previousHalf), o + V(x, y, -flip * half), 0.55, PAINT_DARK)
+		end
+		-- The tower head the girders sit on.
+		box(gantry, "TowerHead", V(3.6, 2.8, 8.4), CF(o + V(x, 31.2, 0)), PAINT_DARK)
+		-- Machinery house over each tower: hoist motors on one side, the hot
+		-- water plant's return pumps on the other.
+		box(gantry, "MachineryHouse", V(5.4, 4, 7.2), CF(o + V(x + side * 0.6, 34.6, 0)), HULL)
+		box(gantry, "MachineryHouseRoof", V(5.8, 0.35, 7.6), CF(o + V(x + side * 0.6, 36.75, 0)), DARK)
+	end
+	-- The bridge itself: two box girders with the carriage rails on top and a
+	-- gap between them for the mast to run through.
+	for _, z in { -2.6, 2.6 } do
+		box(gantry, "BridgeGirder", V(37, 2.6, 1.2), CF(o + V(0, 31.3, z)), PAINT)
+		box(gantry, "CarriageRail", V(33, 0.3, 0.5), CF(o + V(0, 32.75, z)), STEEL)
+		-- Stiffeners on the outer web every few studs: they are what makes a
+		-- girder read as a girder rather than as a painted plank.
+		for i = -4, 4 do
+			local stiff = box(gantry, "GirderStiffener", V(0.25, 2.4, 0.25), CF(o + V(i * 4, 31.3, z + (z > 0 and 0.72 or -0.72))), PAINT_DARK)
+			stiff.CanQuery = false
+		end
+	end
+	local sign = box(gantry, "GirderPlate", V(9, 1.2, 0.1), CF(o + V(-6, 31.3, 3.26)), PAINT_DARK)
+	sign.CanQuery = false
+	Kit.label(sign, "EXCAVATION GANTRY 01", Color3.fromRGB(28, 26, 22), Enum.NormalId.Back)
+
+	------------------------------------------------------------------------------
+	-- SERVICE WALKWAY along the +Z side of the bridge, and the OPERATOR STATION
+	-- on the outside of the left tower. These are where people stand, and people
+	-- are the scale reference for the whole machine.
+	------------------------------------------------------------------------------
+	local WALK_Z, WALK_Y = 4.7, 31.55
+	box(gantry, "ServiceWalkway", V(30, 0.3, 2.4), CF(o + V(0, WALK_Y, WALK_Z)), STEEL, Enum.Material.DiamondPlate)
+	for i = 0, 6 do
+		local x = -15 + i * 5
+		local post = beam(gantry, "WalkwayPost", o + V(x, WALK_Y, WALK_Z + 1.1), o + V(x, WALK_Y + 1.2, WALK_Z + 1.1), 0.14, HIVIS)
+		post.CanQuery = false
+		local bracket = beam(gantry, "WalkwayBracket", o + V(x, WALK_Y - 0.1, 3.2), o + V(x, WALK_Y - 0.1, WALK_Z + 1.1), 0.22, PAINT_DARK)
+		bracket.CanQuery = false
+	end
+	for _, y in { 0.6, 1.2 } do
+		local rail = beam(gantry, "WalkwayRail", o + V(-15, WALK_Y + y, WALK_Z + 1.1), o + V(15, WALK_Y + y, WALK_Z + 1.1), 0.1, HIVIS)
+		rail.CanQuery = false
+	end
+
+	local OP_X, OP_Y = -D.baseX - 3.4, 20
+	box(gantry, "OperatorPlatform", V(4, 0.3, 7), CF(o + V(OP_X, OP_Y, 0)), STEEL, Enum.Material.DiamondPlate)
+	box(gantry, "OperatorCab", V(3, 3.2, 3.6), CF(o + V(OP_X - 0.3, OP_Y + 1.75, -1.6)), HULL)
+	local glass = box(gantry, "OperatorCabGlass", V(0.12, 1.4, 3), CF(o + V(OP_X + 1.22, OP_Y + 2.4, -1.6)), C.glass :: Color3, Enum.Material.Glass)
+	glass.Transparency = 0.3
+	glass.CanQuery = false
+	for _, z in { -3.4, 3.4 } do
+		beam(gantry, "PlatformBracket", o + V(OP_X - 1.6, OP_Y - 0.1, z), o + V(-D.baseX - 0.8, OP_Y - 4, z * 0.8), 0.35, PAINT_DARK)
+	end
+	local opRail = beam(gantry, "PlatformRail", o + V(OP_X - 1.9, OP_Y + 1.1, 3.4), o + V(OP_X - 1.9, OP_Y + 1.1, -3.4), 0.1, HIVIS)
+	opRail.CanQuery = false
+	-- The ladder the operator came up: from the crawler deck to the platform.
+	for _, z in { 2.6, 3.4 } do
+		local stile = beam(gantry, "LadderStile", o + V(OP_X + 0.9, 3.3, z), o + V(OP_X + 0.9, OP_Y, z), 0.12, HIVIS)
+		stile.CanQuery = false
+	end
+	for rung = 1, 16 do
+		local y = 3.3 + rung * (OP_Y - 3.3) / 17
+		local r = beam(gantry, "LadderRung", o + V(OP_X + 0.9, y, 2.6), o + V(OP_X + 0.9, y, 3.4), 0.08, HIVIS)
+		r.CanQuery = false
+	end
+
+	------------------------------------------------------------------------------
+	-- STATIC SERVICES: festoon cable under the bridge, the slush return line
+	-- down the right tower to the separator, and power from the left crawler.
+	------------------------------------------------------------------------------
+	for i = 0, 3 do
+		local x = -13 + i * 5.2
+		hang(gantry, "FestoonCable", o + V(x, 29.8, -3.4), o + V(x + 5.2, 29.8, -3.4), 1.3, 0.3, DARK, 4)
+	end
+	local RETURN_END = o + V(D.baseX - 1.2, 29.2, -3.8)
+	beam(gantry, "SlushReturnLine", RETURN_END, o + V(D.baseX - 1.2, 8.4, -3.8), 1.1, HULL)
+	beam(gantry, "SlushReturnLine", o + V(D.baseX - 1.2, 8.4, -3.8), o + V(D.baseX, 6.8, 2.4), 1.1, HULL)
+	-- And out of the separator, to the spoil heap: this is where the ice went.
+	beam(gantry, "SlushDischarge", o + V(D.baseX + 2, 4.2, 3.6), o + V(D.baseX + 10, 1.4, -6), 0.9, HULL)
+	for _, z in { 6.2, 7, 7.8 } do
+		hang(gantry, "PowerCableBundle", o + V(-D.baseX - 2, 4, z), o + V(-D.baseX - 16, 0.4, z + 8), 0.8, 0.34, DARK, 6)
+	end
+
+	------------------------------------------------------------------------------
+	-- WORK LIGHTS: four under the bridge looking down into the cut, two on masts
+	-- over the machinery houses. Warm, like everything the expedition brought.
+	------------------------------------------------------------------------------
+	local lights: { SpotLight } = {}
+	local lenses: { BasePart } = {}
+	local function workLight(at: Vector3, look: Vector3, brightness: number, range: number)
+		local cf = CFrame.lookAt(at, look)
+		box(gantry, "WorkLightHousing", V(2.2, 1.3, 1.2), cf, DARK)
+		local lens = box(gantry, "WorkLightLens", V(1.9, 1, 0.12), cf * CF(0, 0, -0.65), WARM, Enum.Material.Neon)
+		lens.CastShadow = false
+		lens.CanQuery = false
+		local spot = Instance.new("SpotLight")
+		spot.Face = Enum.NormalId.Front
+		spot.Angle = 70
+		spot.Range = range
+		spot.Color = WARM
+		spot.Brightness = brightness
+		spot:SetAttribute("TargetBrightness", brightness)
+		spot.Parent = lens
+		table.insert(lights, spot)
+		table.insert(lenses, lens)
+	end
+	for _, x in { -10, 10 } do
+		workLight(o + V(x, 29.4, -3.6), o + V(x * 0.4, -12, -2), 1.4, 46)
+		workLight(o + V(x, 29.4, 3.6), o + V(x * 0.4, -12, 4), 1.4, 46)
+	end
+	for _, side in { -1, 1 } do
+		local foot = o + V(side * (D.baseX + 0.6), 36.9, 2.8)
+		beam(gantry, "LightMast", foot, foot + V(0, 2.4, 0), 0.3, STEEL)
+		workLight(foot + V(0, 2.6, 0), o + V(-side * 4, -10, 0), 1.1, 60)
+	end
+
+	------------------------------------------------------------------------------
+	-- 4. THE CARRIAGE. Built at its rest position (x = 0) and placed from there.
+	------------------------------------------------------------------------------
+	local carriage = Kit.model("Carriage", model)
+	local CARRIAGE_REST = CF(o + V(0, 34.2, 0))
+	local carriageBody = box(carriage, "CarriageBody", V(6.6, 2.9, 7.4), CARRIAGE_REST, PAINT)
+	box(carriage, "CarriageRoof", V(6.9, 0.3, 7.7), CARRIAGE_REST * CF(0, 1.6, 0), DARK)
+	drum(carriage, "HoistWinch", V(5, 2, 2), CARRIAGE_REST * CF(0, 2.6, -1.9), DARK, "x")
+	drum(carriage, "HoseSaddle", V(1.2, 3.2, 3.2), CARRIAGE_REST * CF(2.6, 2.4, 2.2), STEEL)
+	for _, x in { -2.6, 2.6 } do
+		for _, z in { -2.6, 2.6 } do
+			drum(carriage, "CarriageWheel", V(0.7, 1.4, 1.4), CARRIAGE_REST * CF(x, -1.25, z), DARK, "z")
+		end
+	end
+	-- The outer mast sleeve, fixed to the carriage, down through the bridge gap.
+	box(carriage, "MastSleeve", V(2.5, 10.5, 2.5), CARRIAGE_REST * CF(0, -3.6, 0), PAINT_DARK)
+	box(carriage, "MastCollar", V(3.4, 0.8, 3.4), CARRIAGE_REST * CF(0, -8.6, 0), STEEL)
+
+	------------------------------------------------------------------------------
+	-- 5. THE CUTTER HEAD, and the inner mast that carries it.
+	------------------------------------------------------------------------------
+	local HEAD_REST = CF(o + V(0, D.headRestY, 0))
+	local mast = Kit.model("InnerMast", model)
+	box(mast, "InnerMast", V(1.7, 30, 1.7), HEAD_REST * CF(0, 4.2 + 15, 0), STEEL)
+	for i = 1, 5 do
+		local band = box(mast, "MastScale", V(1.78, 0.18, 1.78), HEAD_REST * CF(0, 4.2 + i * 5, 0), HIVIS)
+		band.CanQuery = false
+	end
+
+	local cutter = Kit.model("CutterHead", model)
+	-- Central thermal body.
+	local cutterBody = drum(cutter, "ThermalBody", V(5, 6.2, 6.2), HEAD_REST, HULL, "y")
+	-- Hose manifold on top, where supply and return lines meet the head.
+	box(cutter, "HoseManifold", V(3.8, 1.6, 3.8), HEAD_REST * CF(0, 3.3, 0), DARK)
+	drum(cutter, "SupplyStub", V(1.4, 1, 1), HEAD_REST * CF(1.6, 4.1, 1.2), STEEL, "y")
+	drum(cutter, "ExtractionStub", V(1.6, 1.4, 1.4), HEAD_REST * CF(-1.4, 4.2, -1.2), STEEL, "y")
+	-- Outer support ring, upper and lower, and the struts that hold it.
+	for i = 1, 8 do
+		local a = i / 8 * math.pi * 2
+		local r = A(0, a, 0)
+		box(cutter, "SupportRing", V(3.5, 1.1, 1.1), HEAD_REST * r * CF(0, 1.3, 4.3), PAINT)
+		box(cutter, "SupportRing", V(3.7, 1, 1), HEAD_REST * r * CF(0, -1.7, 4.5), PAINT_DARK)
+		if i % 2 == 0 then
+			box(cutter, "RingStrut", V(0.6, 3.6, 0.6), HEAD_REST * r * CF(0, -0.2, 3.6), STEEL)
+			box(cutter, "RingSpoke", V(0.5, 0.5, 1.6), HEAD_REST * r * CF(0, 1.3, 3.3), STEEL)
+		end
+	end
+	-- Six melting/cutting sectors raked outward under the ring. These are what
+	-- make it a tool that removes ice rather than a ball on a stick.
+	for i = 1, 6 do
+		local a = (i + 0.5) / 6 * math.pi * 2
+		local sector = HEAD_REST * A(0, a, 0) * CF(0, -3.2, 3.2) * A(math.rad(-22), 0, 0)
+		box(cutter, "CuttingSector", V(2.5, 2.4, 2.8), sector, STEEL)
+		box(cutter, "SectorTeeth", V(2.3, 0.5, 0.6), sector * CF(0, -1.2, 1.1), DARK)
+	end
+	box(cutter, "HeadNose", V(2.6, 1.2, 2.6), HEAD_REST * CF(0, -3.7, 0), DARK)
+	-- Hi-vis timing stripe on the body: a spinning drum shows no rotation
+	-- without one, the same trick the truck wheels and the hose reel use.
+	box(cutter, "RotationMark", V(0.5, 4.6, 0.3), HEAD_REST * CF(0, 0, -3.13), HIVIS)
+
+	------------------------------------------------------------------------------
+	-- MOVING SERVICES: supply festoon along the bridge to the carriage, and the
+	-- supply and slush lines down the mast to the head.
+	------------------------------------------------------------------------------
+	local supplyFestoon = newHose(model, "SupplyHose", 0.7, DARK, 8)
+	local returnFestoon = newHose(model, "SlushReturnHose", 1, HULL, 8)
+	local mastSupply = newHose(model, "HeadSupplyHose", 0.6, DARK, 6)
+	local mastReturn = newHose(model, "HeadReturnHose", 0.9, HULL, 6)
+
+	------------------------------------------------------------------------------
+	-- STEAM. One emitter on the head (it rides with it) and one at the separator
+	-- vent. Few particles, large and soft: the job is to hide the contact line
+	-- between cutter and ice, not to be an effect in its own right.
+	------------------------------------------------------------------------------
+	local headSteam = Kit.dust(cutterBody, 0, Color3.fromRGB(226, 232, 236), 4)
+	headSteam.Lifetime = NumberRange.new(1.6, 3.2)
+	headSteam.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.4), NumberSequenceKeypoint.new(1, 6) })
+	headSteam.Acceleration = V(0.8, 2.2, 0)
+	headSteam.SpreadAngle = Vector2.new(70, 70)
+	local ventHost = box(model, "SeparatorVent", V(0.8, 0.8, 0.8), CF(o + V(D.baseX, 9.2, 3.4)), DARK)
+	ventHost.CanQuery = false
+	local ventSteam = Kit.dust(ventHost, 0, Color3.fromRGB(226, 232, 236), 3)
+	ventSteam.Lifetime = NumberRange.new(1.2, 2.6)
+	ventSteam.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(1, 4) })
+	ventSteam.Acceleration = V(0.6, 2.6, 0)
+
+	------------------------------------------------------------------------------
+	-- STATE. Three numbers; everything that moves is a function of them.
+	------------------------------------------------------------------------------
+	local placeCarriage = Kit.rigid(carriage, CARRIAGE_REST)
+	local placeMast = Kit.rigid(mast, HEAD_REST)
+	local placeCutter = Kit.rigid(cutter, HEAD_REST)
+	local state = { carriage = 0, depth = 0, spin = 0 }
+
+	local function apply()
+		local x = state.carriage * D.carriageTravel
+		local drop = state.depth * D.cutTravel
+		local carriageCF = CARRIAGE_REST * CF(x, 0, 0)
+		local headCF = HEAD_REST * CF(x, -drop, 0)
+		placeCarriage(carriageCF)
+		placeMast(headCF)
+		placeCutter(headCF * A(0, state.spin * math.pi * 2, 0))
+		-- Festoons: from the fixed ends of the bridge to the carriage. Slack
+		-- grows with distance, which is what a real festoon does.
+		local supplyFrom = o + V(-D.baseX + 1.5, 32.4, 3.2)
+		local supplyTo = carriageCF.Position + V(-3.3, -0.6, 3.2)
+		placeHose(supplyFestoon, supplyFrom, supplyTo, 0.8 + (supplyTo - supplyFrom).Magnitude * 0.06)
+		local returnTo = carriageCF.Position + V(3.3, -1, -3.2)
+		placeHose(returnFestoon, RETURN_END, returnTo, 0.8 + (returnTo - RETURN_END).Magnitude * 0.06)
+		-- Down the mast: from the carriage saddle to the head manifold. Their
+		-- slack is taken up by the saddle, so they stay nearly taut.
+		local headTop = headCF.Position + V(0, 4.3, 0)
+		placeHose(mastSupply, carriageCF.Position + V(2.6, 0.8, 3.6), headTop + V(1.6, 0.3, 1.2), 0.4)
+		placeHose(mastReturn, carriageCF.Position + V(-2.4, -1.5, -3.8), headTop + V(-1.4, 0.4, -1.2), 0.4)
+	end
+	apply()
+
+	local handle: Handle = {
+		model = model,
+		leftBase = leftBase,
+		rightBase = rightBase,
+		gantry = gantry,
+		carriage = carriage,
+		cutter = cutter,
+		cutterBody = cutterBody,
+		carriageBody = carriageBody,
+		walkwayFloor = o + V(0, WALK_Y + 0.15, WALK_Z),
+		operatorFloor = o + V(OP_X, OP_Y + 0.15, 1.6),
+
+		-- -1 .. 1 along the bridge.
+		setCarriagePosition = function(t: number)
+			state.carriage = math.clamp(t, -1, 1)
+			apply()
+		end,
+		-- 0 = parked clear of the ice, 1 = head just above the buried roof.
+		setCutDepth = function(amount: number)
+			state.depth = math.clamp(amount, 0, 1)
+			apply()
+		end,
+		-- Absolute revolutions, like the hose reel: the caller owns the clock.
+		setCutterSpin = function(revolutions: number)
+			state.spin = revolutions
+			apply()
+		end,
+		setSteam = function(amount: number)
+			local a = math.clamp(amount, 0, 1)
+			headSteam.Rate = a * 26
+			ventSteam.Rate = a * 10
+		end,
+		setWorkLights = function(amount: number)
+			local a = math.clamp(amount, 0, 1)
+			for _, spot in lights do
+				spot.Brightness = ((spot:GetAttribute("TargetBrightness") :: number?) or 1) * a
+			end
+			for _, lens in lenses do
+				lens.Transparency = 0.15 + (1 - a) * 0.75
+			end
+		end,
+	}
+	return handle
+end
+
+return ExcavationRig
+
+end)()
 MOD.Env=(function()
 local script={Parent=ParentProxy}
 local require=req
@@ -2710,6 +3225,7 @@ local Kit = require(script.Parent.Kit)
 local VehicleMotion = require(script.Parent.VehicleMotion)
 local Glyph = require(script.Parent.GlyphLanguage)
 local Instrumentation = require(script.Parent.Instrumentation)
+local ExcavationRig = require(script.Parent.ExcavationRig)
 local Env = {}
 local V, CF, A = Vector3.new, CFrame.new, CFrame.Angles
 local C = {
@@ -3174,9 +3690,13 @@ local function boreSystem(env,root,o)
    -- reads as braced structure instead of a stack of square hoops.
    local upper=2.7+(1.15-2.7)*((y+4.4)/BORE_TOWER_TOP)
    if level<4 then
-    local lift=V(0,4.4,0)
-    local target=if (i+level)%2==0 then b*(upper/r)+lift else a*(upper/r)+lift
-    Kit.beam(tower,"TowerBrace",a,bore+target,0.16,C.metal)
+    -- Scale the CORNER OFFSET inward, never the world position: scaling
+    -- `a`/`b` themselves (which already include `bore`) and then adding
+    -- `bore` again threw every brace thousands of studs into the sky - and,
+    -- for any plant not built at x=0, sideways into the interior stages.
+    local corner=if (i+level)%2==0 then corners[i%4+1] else corners[i]
+    local k=upper/r
+    Kit.beam(tower,"TowerBrace",a,bore+V(corner.X*k,y+4.4,corner.Z*k),0.16,C.metal)
    end
   end
  end
@@ -3969,235 +4489,333 @@ end
 --------------------------------------------------------------------------------
 -- THE OPEN CUT
 --
--- What the expedition does AFTER the bore drops into a void: widen the
--- shallow section until the thing under the ice is standing in daylight.
+-- Rebuilt 2026-09-23. The bore found the structure; this is how it was
+-- EXPOSED. The old version cut straight from the console reading "non-ice
+-- material" to a finished three-bench pit with a roof at the bottom, so the
+-- audience never saw how a hose-width hole became a hole people could climb
+-- down. Now there is a second machine (ExcavationRig.lua) straddling the cut,
+-- and the ice between the surface and the roof is a set of cover strips that
+-- Env.setExcavationProgress lowers - fastest under the gantry, slowest at the
+-- far ends - so the roof comes into view from the middle outward, the way a
+-- real cut would open.
 --
--- This is a stepped excavation, not a hole. Three benches per side, each one
--- set in from the last, because that is how you dig a deep pit in a material
--- that will otherwise shear - and because a straight-sided shaft gives the
--- camera no scale at all, whereas benches give it a staircase of known steps
--- to read the depth against.
+--     plan (Z runs toward camera in the establishing shot)
 --
--- The point of the shot it exists for is the CONTRAST: cut ice above, and a
--- flat black composite roof at the bottom of it with bronze conduit running
--- out of the walls. Nothing about that roof is geological, and the audience
--- should be able to see that from the rim without being told.
+--        z=-18  ┌──────── scaffold stair ─────────┐
+--               │ shoring      ROOF       shoring │   26 wide (x +-13)
+--        z=0  ══╪══ gantry bridge over the cut ═══╪══ crawlers at x +-16
+--               │              [HATCH]            │   36 long (z +-18)
+--        z=+18  └──── barrier / observers ────────┘
 --
--- It is its own stage (Zones.Excavation) rather than a pit dug into the
--- Arctic set: see the note on that zone.
+--     section: snow 0..-3, ice -3..-16; the roof's top is at -12, with a
+--     drainage trench either side of it down to -16.
+--
+-- Everything that belongs to the expedition's work AT THE BOTTOM (hoist over
+-- the hatch, power station, lamps, crates) is built hidden and only appears
+-- once the cut is complete: those things arrive after the roof is exposed, and
+-- a tripod standing inside unexcavated ice would give the ending away.
 --------------------------------------------------------------------------------
+local CUT = {halfWidth=13,halfLength=18,roofTop=-12,floor=-16,snowDepth=3,hatchZ=11.5,roofHalfWidth=10}
+Env.Cut=CUT
 
 local function excavation(env,rng)
  local x=Env.Zones.Excavation
  local pit=Kit.folder("OpenCut",env.folder)
  env.excavation=pit
- local BENCHES={{inner=23,top=0,bottom=-8},{inner=18,top=-8,bottom=-16},{inner=13,top=-16,bottom=-24}}
- local ROOF_Y=-25
+ local W,L=CUT.halfWidth,CUT.halfLength
+ local ROOF_TOP=CUT.roofTop
+ local ROOF_Y=ROOF_TOP-1 -- slab centre
+ local FLOOR=CUT.floor
 
- -- Surrounding ice mass, built as four walls rather than one block with a
- -- hole in it: the walls ARE the cut faces, so there is no solid slab for a
- -- camera looking in to have to shoot through.
- for _,bench in BENCHES do
-  local height=bench.top-bench.bottom
-  local midY=(bench.top+bench.bottom)/2
-  for _,side in {-1,1} do
-   part(pit,"CutIceFace",V(6,height,bench.inner*2+12),CF(x+V(side*(bench.inner+3),midY,0)),C.ice,Enum.Material.Ice)
-   part(pit,"CutIceFace",V(bench.inner*2+12,height,6),CF(x+V(0,midY,side*(bench.inner+3))),C.ice,Enum.Material.Ice)
-  end
-  -- The bench floor itself: a walkable ledge of cut ice, scored by the saw.
-  for _,side in {-1,1} do
-   part(pit,"BenchFloor",V(5,0.6,bench.inner*2+10),CF(x+V(side*(bench.inner+2.5),bench.top-0.3,0)),C.ice:Lerp(C.snow,0.4),Enum.Material.Ice)
-   part(pit,"BenchFloor",V(bench.inner*2+10,0.6,5),CF(x+V(0,bench.top-0.3,side*(bench.inner+2.5))),C.ice:Lerp(C.snow,0.4),Enum.Material.Ice)
-  end
- end
- -- Saw scoring on the upper faces. Vertical kerfs at an irregular pitch read
- -- as machine-cut ice; an unbroken blue wall reads as a swimming pool.
- -- Occasional saw marks, not hatching. At twenty-six a side these read as
- -- corduroy from the establishing distance the shot is actually taken at;
- -- nine, unevenly spaced and half the depth, read as a cut face.
- for i=1,9 do
-  local along=-20+i*4.6+rng:NextNumber(-1.6,1.6)
-  for _,side in {-1,1} do
-   part(pit,"SawKerf",V(0.16,6.6,0.22),CF(x+V(side*22.94,-4.2,along)),C.deep,Enum.Material.Ice)
-   part(pit,"SawKerf",V(0.22,6.6,0.16),CF(x+V(along,-4.2,side*22.94)),C.deep,Enum.Material.Ice)
-  end
- end
- -- Rim: a snow lip, spoil piles from the cut, and stacked blocks that were
- -- lifted out. Evidence, not decoration - this is where the ice went.
+ -- GROUND. A ring of packed snow at y=0 around the opening, then solid ice
+ -- walls under it: the walls ARE the cut faces, so there is no solid slab
+ -- for a camera looking in to shoot through.
+ local FAR=160
+ part(pit,"PackedSnowField",V(FAR-W,CUT.snowDepth,FAR*2),CF(x+V(-(FAR+W)/2,-CUT.snowDepth/2,0)),C.snow,Enum.Material.Snow)
+ part(pit,"PackedSnowField",V(FAR-W,CUT.snowDepth,FAR*2),CF(x+V((FAR+W)/2,-CUT.snowDepth/2,0)),C.snow,Enum.Material.Snow)
+ part(pit,"PackedSnowField",V(W*2,CUT.snowDepth,FAR-L),CF(x+V(0,-CUT.snowDepth/2,-(FAR+L)/2)),C.snow,Enum.Material.Snow)
+ part(pit,"PackedSnowField",V(W*2,CUT.snowDepth,FAR-L),CF(x+V(0,-CUT.snowDepth/2,(FAR+L)/2)),C.snow,Enum.Material.Snow)
+ local iceH=-CUT.snowDepth-FLOOR
+ local iceY=(-CUT.snowDepth+FLOOR)/2
  for _,side in {-1,1} do
-  part(pit,"RimLip",V(7,2.4,60),CF(x+V(side*29,0.4,0)),C.snow,Enum.Material.Snow)
-  part(pit,"RimLip",V(60,2.4,7),CF(x+V(0,0.4,side*29)),C.snow,Enum.Material.Snow)
-  snowRidge(pit,CF(x+V(side*40,0.6,10))*A(0,math.pi/2,0),13,2.6,26)
+  part(pit,"CutIceFace",V(10,iceH,L*2+20),CF(x+V(side*(W+5),iceY,0)),C.ice,Enum.Material.Ice)
+  part(pit,"CutIceFace",V(W*2,iceH,10),CF(x+V(0,iceY,side*(L+5))),C.ice,Enum.Material.Ice)
+  -- The drainage trench floor between the structure's side and the wall.
+  part(pit,"TrenchFloor",V(2.6,1,L*2),CF(x+V(side*(W-1.3),FLOOR-0.5,0)),C.deep,Enum.Material.Ice)
  end
- for i=1,9 do
-  part(pit,"CutIceBlock",V(4.4,2.6,4.4),CF(x+V(-36+((i-1)%3)*5,2+math.floor((i-1)/3)*2.7,20+((i-1)%3)*1.2))*A(0,rng:NextNumber(-0.2,0.2),0),C.ice,Enum.Material.Ice)
+ -- Distant relief, so the establishing shot has a horizon that is not flat.
+ for i=1,6 do
+  local a=i/6*math.pi*2+0.4
+  snowRidge(pit,CF(x+V(math.sin(a)*rng:NextNumber(90,130),0.6,math.cos(a)*rng:NextNumber(90,130)))*A(0,a,0),rng:NextNumber(20,34),rng:NextNumber(4,9),rng:NextNumber(40,70))
  end
 
- -- THE EXPOSED STRUCTURE. Flat, dark, ribbed and unmistakably manufactured,
- -- with ice still frozen onto its edges where the cut stopped.
+ -- THE CUT FACES. Machine-cut, not deleted: saw kerfs at an uneven pitch, the
+ -- horizontal ledges each pass of the cutter left, and steel shoring holding
+ -- the long faces back where the crawlers bear on the lip.
+ for i=1,8 do
+  local along=-L+2+i*4.1+rng:NextNumber(-1.2,1.2)
+  for _,side in {-1,1} do
+   part(pit,"SawKerf",V(0.16,11,0.22),CF(x+V(side*(W-0.06),-9.2,along)),C.deep,Enum.Material.Ice)
+  end
+ end
+ for index,y in {-5.2,-9.6,-13.4} do
+  for _,side in {-1,1} do
+   part(pit,"CutterPassLedge",V(0.5,0.35,L*2),CF(x+V(side*(W-0.1),y+index*0.1,0)),C.ice:Lerp(C.deep,0.35),Enum.Material.Ice)
+   part(pit,"CutterPassLedge",V(W*2,0.35,0.5),CF(x+V(0,y-index*0.15,side*(L-0.1))),C.ice:Lerp(C.deep,0.35),Enum.Material.Ice)
+  end
+ end
+ for _,side in {-1,1} do
+  for i=0,5 do
+   part(pit,"SoldierPile",V(0.8,13.6,0.8),CF(x+V(side*(W-0.45),-8.8,-15+i*6)),C.metal)
+  end
+  for _,y in {-4.6,-8.4} do
+   part(pit,"Waler",V(0.6,0.8,L*2-2),CF(x+V(side*(W-1.05),y,0)),C.hullDark)
+  end
+ end
+
+ -- THE BURIED STRUCTURE. Flat, dark, ribbed and unmistakably manufactured,
+ -- running out of the cut and into the ice at both ends: this continues past
+ -- what has been dug out.
  local roof=Kit.model("BuriedAccessStructure",pit)
  env.accessStructure=roof
+ local RW,RL=CUT.roofHalfWidth,22
+ local H=5.6 -- hatch half-width
+ local hz=CUT.hatchZ
  --[[
-  FOUR SLABS AROUND A REAL HOLE, never one slab with a hatch drawn on it.
-
-  As a solid 26-stud plate the roof contained the hatch throat, so the shot
-  that looks down the shaft had its focal point inside the floor - and every
-  frame of that descent was quietly relocated by the camera's own unstick
-  fallback. A hatch has to be an absence.
+  SLABS AROUND A REAL HOLE, never one slab with a hatch drawn on it: the shot
+  that looks down the shaft needs its focal point to be an absence.
  ]]
- local HATCH_HALF=5.6
- for _,side in {-1,1} do
-  part(roof,"CompositeRoof",V(13-HATCH_HALF,2,26),CF(x+V(side*(13+HATCH_HALF)/2,ROOF_Y,0)),C.facComposite,Enum.Material.Slate)
-  part(roof,"CompositeRoof",V(HATCH_HALF*2,2,13-HATCH_HALF),CF(x+V(0,ROOF_Y,side*(13+HATCH_HALF)/2)),C.facComposite,Enum.Material.Slate)
- end
- -- Two pieces per rib, one either side of the hatch. A single 25-stud rib
- -- runs straight across the opening, which is both wrong (a hatch has a
- -- frame, not a beam through it) and opaque to the shot that looks down into
- -- the shaft.
- for i=1,7 do
-  for _,side in {-1,1} do
-   part(roof,"RoofRib",V(6.8,0.5,0.9),CF(x+V(side*9.4,ROOF_Y+1.2,-11+(i-1)*3.6)),C.facMetal)
+ env.structureRoof=part(roof,"CompositeRoof",V(RW-H,2,RL*2),CF(x+V(-(RW+H)/2,ROOF_Y,0)),C.facComposite,Enum.Material.Slate)
+ part(roof,"CompositeRoof",V(RW-H,2,RL*2),CF(x+V((RW+H)/2,ROOF_Y,0)),C.facComposite,Enum.Material.Slate)
+ part(roof,"CompositeRoof",V(H*2,2,(hz-H)+RL),CF(x+V(0,ROOF_Y,(-RL+hz-H)/2)),C.facComposite,Enum.Material.Slate)
+ part(roof,"CompositeRoof",V(H*2,2,RL-(hz+H)),CF(x+V(0,ROOF_Y,(RL+hz+H)/2)),C.facComposite,Enum.Material.Slate)
+ -- Ribs across the roof, split either side of the hatch.
+ for i=0,10 do
+  local z=-RL+2+i*4
+  if z>hz-H-0.6 and z<hz+H+0.6 then
+   for _,side in {-1,1} do
+    part(roof,"RoofRib",V(RW-H-0.4,0.5,0.9),CF(x+V(side*(RW+H)/2,ROOF_TOP+0.25,z)),C.facMetal)
+   end
+  else
+   part(roof,"RoofRib",V(RW*2-0.6,0.5,0.9),CF(x+V(0,ROOF_TOP+0.25,z)),C.facMetal)
   end
  end
- for _,side in {-1,1} do
-  part(roof,"RoofEdgeArmour",V(1.6,1.3,26),CF(x+V(side*12.6,ROOF_Y+1,0)),C.facIvory)
-  part(roof,"RoofEdgeArmour",V(26,1.3,1.6),CF(x+V(0,ROOF_Y+1,side*12.6)),C.facIvory)
-  -- Ice still gripping the edges: the cut reached the roof and stopped.
-  part(roof,"ClingingIce",V(5,3.4,26),CF(x+V(side*14.4,ROOF_Y+1.6,0))*A(0,0,side*0.2),C.ice,Enum.Material.Ice,"wedge",0.1)
+ -- The seam: one straight joint the full width of the roof. Nothing natural
+ -- in ice makes a line like this, which is the whole payoff of "GEOMETRY:
+ -- REGULAR" on the console.
+ part(roof,"PanelSeam",V(RW*2,0.14,0.22),CF(x+V(0,ROOF_TOP+0.05,-4)),Color3.fromRGB(8,9,11),Enum.Material.SmoothPlastic)
+ for _,px in {-5.6,5.6} do
+  part(roof,"PanelSeam",V(0.22,0.14,RL*2),CF(x+V(px*1.25,ROOF_TOP+0.05,0)),Color3.fromRGB(8,9,11),Enum.Material.SmoothPlastic)
  end
- -- Conduit running out of the structure and INTO the ice, which is the detail
- -- that says this continues past what has been dug out.
- for _,offset in {-7.5,7.5} do
-  -- Default axis: the run is along world X, crossing the roof and vanishing
-  -- into the ice wall at each end. Passing "z" ran it along Z instead, which
-  -- put a conduit straight through the access hatch.
-  cylinder(roof,"EmbeddedConduit",V(30,1.1,1.1),CF(x+V(0,ROOF_Y+1.5,offset)),C.bronzeDark)
+ -- Its sides, seen in the drainage trenches: composite walls and buttresses
+ -- going down past where anybody has dug.
+ for _,side in {-1,1} do
+  local wall=part(roof,"StructureSideWall",V(1,ROOF_TOP-FLOOR,RL*2),CF(x+V(side*(RW+0.5),(ROOF_TOP+FLOOR)/2,0)),C.facComposite,Enum.Material.Slate)
+  if side<0 then env.structureEdgeLeft=wall else env.structureEdgeRight=wall end
+  for i=0,6 do
+   part(roof,"SideButtress",V(0.9,4.6,1.1),CF(x+V(side*(RW+1.2),ROOF_TOP-2.3,-18+i*6)),C.facMetal)
+  end
+  part(roof,"RoofEdgeArmour",V(1.4,1.2,RL*2),CF(x+V(side*(RW-0.6),ROOF_TOP+0.6,0)),C.facIvory)
+  -- Ice still gripping the edges where the cut stopped.
+  part(roof,"ClingingIce",V(2.4,2.6,RL*2),CF(x+V(side*(W-1.2),ROOF_TOP+1.2,0))*A(0,0,side*0.2),C.ice,Enum.Material.Ice,"wedge",0.1)
+ end
+ -- Conduit running out of the structure and INTO the ice walls.
+ for _,z in {-9,-16.5} do
+  cylinder(roof,"EmbeddedConduit",V(W*2+8,1.1,1.1),CF(x+V(0,ROOF_TOP+0.5,z)),C.bronzeDark)
   for i=1,5 do
-   part(roof,"ConduitClamp",V(1.6,1.5,0.7),CF(x+V(-10+(i-1)*5,ROOF_Y+1.5,offset)),C.facMetal)
+   part(roof,"ConduitClamp",V(1.6,1.5,0.7),CF(x+V(-10+(i-1)*5,ROOF_TOP+0.5,z)),C.facMetal)
   end
  end
- -- One faint glyph band, still dead. The first ancient writing in the film,
- -- and it is almost buried in frost - a mark the audience will see again on
- -- the key, on the gate and on Aegis Zero's chest.
+ -- One faint glyph band, still dead: the first ancient writing in the film,
+ -- seen again on the key, the gate and Aegis Zero's chest.
  env.roofGlyphs=Glyph.band(roof,Glyph.Phrases.SealAuthority,
-  CF(x+V(0,ROOF_Y+1.1,9.5))*A(-math.pi/2,0,0),0.95,3,C.bronzeDark,{emissive=false})
- for i=1,14 do
-  -- Pushed outside the hatch collar: frost drawn over the opening is frost
-  -- floating in mid-air over a shaft.
+  CF(x+V(0,ROOF_TOP+0.1,-13))*A(-math.pi/2,0,0),0.95,3,C.bronzeDark,{emissive=false})
+ for i=1,12 do
   local side=i%2==0 and 1 or -1
   part(roof,"SurfaceFrost",V(rng:NextNumber(1.6,4.2),0.12,rng:NextNumber(1.6,4.2)),
-   CF(x+V(side*rng:NextNumber(6.5,11.5),ROOF_Y+1.1,rng:NextNumber(-11,11))),C.frost,Enum.Material.Ice,nil,0.35)
+   CF(x+V(side*rng:NextNumber(6.8,9.5),ROOF_TOP+0.08,rng:NextNumber(-18,18))),C.frost,Enum.Material.Ice,nil,0.35)
  end
 
- -- THE ACCESS HATCH. A recessed collar, the cover lifted out and standing on
- -- edge beside it, and a black throat: the way in.
+ -- THE ACCESS BULKHEAD. A raised armoured coaming around the hatch, the cover
+ -- lifted out and standing on edge beside it, and a black throat: the way in.
  local hatch=Kit.model("AccessHatch",roof)
  env.accessHatch=hatch
- for i=1,10 do
-  local a=i/10*math.pi*2
-  part(hatch,"HatchCollar",V(2.6,1.1,1.5),CF(x+V(math.sin(a)*4.4,ROOF_Y+1.5,math.cos(a)*4.4))*A(0,a,0),C.facMetal)
+ local bulkhead=Kit.model("AccessBulkhead",hatch)
+ env.accessBulkhead=bulkhead
+ for _,side in {-1,1} do
+  part(bulkhead,"Coaming",V(1.2,1.8,H*2+2.4),CF(x+V(side*(H+0.6),ROOF_TOP+0.9,hz)),C.facMetal)
+  part(bulkhead,"Coaming",V(H*2,1.8,1.2),CF(x+V(0,ROOF_TOP+0.9,hz+side*(H+0.6))),C.facMetal)
+  part(bulkhead,"CoamingArmour",V(0.5,0.5,H*2+2.4),CF(x+V(side*(H+0.6),ROOF_TOP+1.95,hz)),C.facIvory)
  end
- env.hatchThroat=part(hatch,"HatchThroat",V(7,0.4,7),CF(x+V(0,ROOF_Y+0.9,0)),Color3.fromRGB(6,7,9),Enum.Material.SmoothPlastic)
- part(hatch,"ShaftLining",V(8.4,10,0.5),CF(x+V(0,ROOF_Y-5,-4.2)),C.facMetal)
- part(hatch,"ShaftLining",V(8.4,10,0.5),CF(x+V(0,ROOF_Y-5,4.2)),C.facMetal)
- part(hatch,"LiftedHatchCover",V(7.4,0.8,7.4),CF(x+V(9.5,ROOF_Y+4.2,0))*A(0,0,math.rad(76)),C.facMetal,Enum.Material.DiamondPlate)
- env.hatchGlyph=Glyph.render(hatch,"Gate",CF(x+V(9.1,ROOF_Y+4.2,0))*A(0,-math.pi/2,0)*A(0,0,math.rad(-14)),0.9,C.bronzeDark,{emissive=false})
- -- The expedition's own way down it: a bolted ladder and a tripod hoist.
+ for _,dx in {-1,1} do
+  for _,dz in {-1,1} do
+   part(bulkhead,"DogLever",V(0.5,0.9,1.6),CF(x+V(dx*(H+0.6),ROOF_TOP+2.3,hz+dz*3.4))*A(0,0,dx*0.5),C.bronzeDark)
+  end
+ end
+ env.hatchThroat=part(hatch,"HatchThroat",V(H*2,0.4,H*2),CF(x+V(0,ROOF_TOP-10,hz)),Color3.fromRGB(6,7,9),Enum.Material.SmoothPlastic)
+ for _,side in {-1,1} do
+  part(hatch,"ShaftLining",V(H*2,10,0.5),CF(x+V(0,ROOF_TOP-5,hz+side*(H-0.25))),C.facMetal)
+  part(hatch,"ShaftLining",V(0.5,10,H*2),CF(x+V(side*(H-0.25),ROOF_TOP-5,hz)),C.facMetal)
+ end
+ part(hatch,"LiftedHatchCover",V(7.4,0.8,7.4),CF(x+V(8.6,ROOF_TOP+3.4,hz+0.5))*A(0,0,math.rad(76)),C.facMetal,Enum.Material.DiamondPlate)
+ env.hatchGlyph=Glyph.render(hatch,"Gate",CF(x+V(8.2,ROOF_TOP+3.4,hz+0.5))*A(0,-math.pi/2,0)*A(0,0,math.rad(-14)),0.9,C.bronzeDark,{emissive=false})
  for rung=1,11 do
-  Kit.beam(hatch,"DescentLadderRung",x+V(-0.8,ROOF_Y-rung*0.9,3.6),x+V(0.8,ROOF_Y-rung*0.9,3.6),0.1,C.hiVis)
+  Kit.beam(hatch,"DescentLadderRung",x+V(-0.8,ROOF_TOP-rung*0.9,hz+H-0.9),x+V(0.8,ROOF_TOP-rung*0.9,hz+H-0.9),0.1,C.hiVis)
  end
  for _,side in {-1,1} do
-  Kit.beam(hatch,"DescentLadderStile",x+V(side*0.9,ROOF_Y+2,3.6),x+V(side*0.9,ROOF_Y-10,3.6),0.12,C.hiVis)
+  Kit.beam(hatch,"DescentLadderStile",x+V(side*0.9,ROOF_TOP+2,hz+H-0.9),x+V(side*0.9,ROOF_TOP-10,hz+H-0.9),0.12,C.hiVis)
  end
- local hoist=Kit.model("TripodHoist",roof)
- for i=0,2 do
-  local a=i*2.1
-  Kit.beam(hoist,"HoistLeg",x+V(math.sin(a)*5,ROOF_Y+1.2,math.cos(a)*5),x+V(0,ROOF_Y+9,0),0.28,C.hiVis)
- end
- part(hoist,"HoistHead",V(1.6,0.9,1.6),CF(x+V(0,ROOF_Y+9.3,0)),C.hullDark)
- Kit.beam(hoist,"HoistLine",x+V(0,ROOF_Y+9,0),x+V(0,ROOF_Y+3.6,0),0.09,C.dark)
- part(hoist,"HoistHook",V(0.5,0.9,0.5),CF(x+V(0,ROOF_Y+3.2,0)),C.metal)
 
- -- SCAFFOLD. Down the -X side, four landings and three stair flights, which
- -- is the object that makes the depth of the cut legible in a wide shot.
+ -- SCAFFOLD down the -Z end wall: a stair tower extended lift by lift as the
+ -- cut went down, which is what makes the depth legible in a wide shot and
+ -- is how the team gets to the roof.
  local scaffold=Kit.model("ExcavationScaffold",pit)
  env.scaffold=scaffold
- local LANDINGS={-3.5,-10.5,-17.5,ROOF_Y+1.6}
- for index,y in LANDINGS do
-  local inset=if index<=3 then BENCHES[index].inner-1.5 else 11
-  part(scaffold,"ScaffoldLanding",V(7,0.3,9),CF(x+V(-inset+3,y,0)),C.metal,Enum.Material.DiamondPlate)
-  for _,side in {-1,1} do
-   Kit.beam(scaffold,"LandingRail",x+V(-inset+0.2,y+1.2,side*4.4),x+V(-inset+6.2,y+1.2,side*4.4),0.11,C.hiVis)
-  end
-  if index<#LANDINGS then
-   local nextY=LANDINGS[index+1]
-   local nextInset=if index+1<=3 then BENCHES[index+1].inner-1.5 else 11
-   local flight=(index%2==0) and 1 or -1
-   local a=x+V(-inset+3,y,flight*4.2)
-   local b=x+V(-nextInset+3,nextY,flight*4.2)
-   Kit.beam(scaffold,"StairStringer",a,b,0.5,C.metal)
-   local steps=math.max(4,math.floor((y-nextY)/1.1))
-   for s=1,steps do
-    local t=s/(steps+1)
-    part(scaffold,"StairTread",V(3.4,0.18,1),CF(a:Lerp(b,t)),C.metal,Enum.Material.DiamondPlate)
+ local SZ=-L+2.4
+ local LANDINGS={{x=-9,y=0},{x=-3,y=-4},{x=-9,y=-8},{x=-3,y=ROOF_TOP+0.35}}
+ for index,landing in LANDINGS do
+  part(scaffold,"ScaffoldLanding",V(4.4,0.3,4),CF(x+V(landing.x,landing.y-0.15,SZ)),C.metal,Enum.Material.DiamondPlate)
+  Kit.beam(scaffold,"LandingRail",x+V(landing.x-2.2,landing.y+1.1,SZ+2),x+V(landing.x+2.2,landing.y+1.1,SZ+2),0.11,C.hiVis)
+  for _,dx in {-2,2} do
+   for _,dz in {-1.8,1.8} do
+    Kit.beam(scaffold,"ScaffoldUpright",x+V(landing.x+dx,landing.y,SZ+dz),x+V(landing.x+dx,ROOF_TOP,SZ+dz),0.2,C.metal)
    end
-   Kit.beam(scaffold,"StairRail",a+V(0,1.3,0),b+V(0,1.3,0),0.1,C.hiVis)
   end
-  Kit.beam(scaffold,"ScaffoldUpright",x+V(-inset+0.4,y,4.6),x+V(-inset+0.4,y+2.6,4.6),0.2,C.metal)
+  local following=LANDINGS[index+1]
+  if following then
+   local a=x+V(landing.x+(following.x>landing.x and 2.2 or -2.2),landing.y,SZ)
+   local b=x+V(following.x+(following.x>landing.x and -2.2 or 2.2),following.y,SZ)
+   Kit.beam(scaffold,"StairStringer",a,b,0.45,C.metal)
+   for s=1,5 do
+    part(scaffold,"StairTread",V(1,0.18,2.6),CF(a:Lerp(b,s/6)),C.metal,Enum.Material.DiamondPlate)
+   end
+   Kit.beam(scaffold,"StairRail",a+V(0,1.2,1.3),b+V(0,1.2,1.3),0.1,C.hiVis)
+  end
  end
 
- -- Work lighting: three masts on the rim aimed down into the cut, two
- -- portables on the structure itself. All warm, all obviously brought here -
- -- the contrast with the facility's own cold fixtures starts on this shot.
- for _,spec in {{at=V(-26,9,-16),look=V(-6,-22,-4)},{at=V(26,9,-16),look=V(6,-22,-4)},{at=V(0,9,27),look=V(0,-22,4)}} do
-  local base=x+V(spec.at.X,0.8,spec.at.Z)
+ -- SLUSH DRAINAGE: a dewatering pump in each trench, discharging up the wall.
+ for _,side in {-1,1} do
+  local at=x+V(side*(W-1),FLOOR+0.8,side*6)
+  part(pit,"DewateringPump",V(1.6,1.6,2.4),CF(at),C.hiVis)
+  cable(pit,at+V(0,0.8,0),x+V(side*(W+3),0.4,side*6+2),1.4,C.hullDark)
+ end
+
+ -- THE RIM: barriers where the observers stand, marker stakes at the corners
+ -- of the planned cut, a spoil heap where the ice went, and cut blocks lifted
+ -- out and stacked.
+ for i=-1,1 do
+  local at=x+V(i*8.5,0.7,L+3.2)
+  part(pit,"SafetyBarrier",V(6.4,1.4,0.24),CF(at),C.hiVis)
+  for _,dx in {-2.8,2.8} do
+   part(pit,"BarrierFoot",V(0.5,0.3,1.4),CF(at+V(dx,-0.55,0)),C.dark)
+  end
+ end
+ for _,side in {-1,1} do
+  part(pit,"SafetyBarrier",V(0.24,1.4,6.4),CF(x+V(side*(W+2.2),0.7,-L+4)),C.hiVis)
+ end
+ for _,cx in {-1,1} do
+  for _,cz in {-1,1} do
+   part(pit,"SurveyStake",V(0.2,2.2,0.2),CF(x+V(cx*(W+0.8),1.1,cz*(L+0.8))),C.hiVis)
+  end
+ end
+ for i=1,5 do
+  part(pit,"SpoilHeap",V(rng:NextNumber(5,9),rng:NextNumber(2,4.5),rng:NextNumber(5,9)),
+   CF(x+V(27+i*2.2,0.8,-8+rng:NextNumber(-3,4)))*A(0,rng:NextNumber(0,3),0),C.snow:Lerp(C.ice,0.3),Enum.Material.Snow,"ball")
+ end
+ for i=1,9 do
+  part(pit,"CutIceBlock",V(4.4,2.6,4.4),CF(x+V(-30+((i-1)%3)*5,1.3+math.floor((i-1)/3)*2.7,-14+((i-1)%3)*1.2))*A(0,rng:NextNumber(-0.2,0.2),0),C.ice,Enum.Material.Ice)
+ end
+ for _,spec in {{at=V(-22,9,22),look=V(-4,-12,2)},{at=V(22,9,-24),look=V(4,-12,-2)}} do
+  local base=x+V(spec.at.X,0,spec.at.Z)
   Kit.beam(pit,"RimLampMast",base,base+V(0,spec.at.Y,0),0.3,C.metal)
   part(pit,"RimLampHead",V(1.8,0.8,1.1),CFrame.lookAt(x+spec.at,x+spec.look),C.hullDark)
   local lens=part(pit,"RimLampLens",V(1.5,0.6,0.12),CFrame.lookAt(x+spec.at,x+spec.look)*CF(0,0,-0.6),C.warm,Enum.Material.Neon,nil,0.2)
   lens.CastShadow=false
   local beam=Instance.new("SpotLight")
-  beam.Face=Enum.NormalId.Front;beam.Angle=58;beam.Range=52;beam.Brightness=1.8;beam.Color=C.warm
+  beam.Face=Enum.NormalId.Front;beam.Angle=58;beam.Range=52;beam.Brightness=1.4;beam.Color=C.warm
   beam.Parent=lens
-  cable(pit,base+V(0,0.6,0),x+V(spec.at.X*0.6,1,spec.at.Z*1.2),1.2)
  end
- for _,at in {V(-8,0,8),V(8,0,-9)} do
-  local mast=Kit.model("PortableWorkLamp",pit)
+
+ -- THE SURVEY PLANT, MOVED ASIDE. The same deep-bore plant the discovery was
+ -- made with, pulled back off its hole so the gantry could be assembled over
+ -- the shallow end of the structure. It is here so the establishing shot can
+ -- put the two machines side by side: the small grey instrument that found
+ -- it, and the thing they brought in once they knew. Built into its own
+ -- throwaway table so the original plant's references stay the ones the bore
+ -- shots drive.
+ local survey={weather={}}
+ boreSystem(survey,pit,x+V(-34,0,52))
+ env.surveyPlant=survey
+ Env.setBoreSteam(survey,10)
+
+ -- THE GANTRY.
+ local rig=ExcavationRig.build(pit,x,C)
+ env.excavationRig=rig
+ rig.setCarriagePosition(-0.7)
+ rig.setWorkLights(1)
+ rig.setSteam(0)
+ -- A crew hut for the gantry, beside the left crawler.
+ part(pit,"GantryCrewHut",V(6,3.6,4.6),CF(x+V(-27,1.8,-6)),C.hull)
+ part(pit,"GantryCrewHutRoof",V(6.4,0.3,5),CF(x+V(-27,3.75,-6)),C.hullDark)
+
+ -- THE ICE STILL IN THE CUT. Six strips across the opening, lowered by
+ -- Env.setExcavationProgress; opaque, so the roof is revealed by the ice
+ -- physically not being there any more. They never block a camera query or a
+ -- character placement (CanQuery false): they are a cover, not a floor.
+ env.excavationIceCover={}
+ local STRIPS=6
+ for i=1,STRIPS do
+  local z=-L+(i-0.5)*(L*2/STRIPS)
+  local strip=part(pit,"UnexcavatedIce",V(W*2,-FLOOR,L*2/STRIPS),CF(x+V(0,FLOOR/2,z)),C.ice:Lerp(C.snow,0.45),Enum.Material.Ice)
+  strip.CanQuery=false
+  table.insert(env.excavationIceCover,{part=strip,z=z,width=W*2,length=L*2/STRIPS})
+ end
+ local mistHost=part(pit,"CutMistSource",V(W*2-2,0.4,8),CF(x+V(0,0.2,0)),C.snow,nil,nil,1)
+ env.cutMistHost=mistHost
+ env.cutMist=Kit.dust(mistHost,0,Color3.fromRGB(226,232,236),3)
+ env.cutMist.Lifetime=NumberRange.new(1.8,3.4)
+ env.cutMist.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.6),NumberSequenceKeypoint.new(1,7)})
+ env.cutMist.Acceleration=V(0.8,1.8,0)
+
+ -- THE WORK AT THE BOTTOM, hidden until the cut is complete.
+ env.postExcavationKit={}
+ local kit=Kit.model("ShaftHeadKit",pit)
+ local hoist=Kit.model("TripodHoist",kit)
+ env.hatchHoist=hoist
+ for i=0,2 do
+  local a=i*2.1
+  Kit.beam(hoist,"HoistLeg",x+V(math.sin(a)*5,ROOF_TOP+0.2,hz+math.cos(a)*5),x+V(0,ROOF_TOP+9,hz),0.28,C.hiVis)
+ end
+ part(hoist,"HoistHead",V(1.6,0.9,1.6),CF(x+V(0,ROOF_TOP+9.3,hz)),C.hullDark)
+ Kit.beam(hoist,"HoistLine",x+V(0,ROOF_TOP+9,hz),x+V(0,ROOF_TOP+2.6,hz),0.09,C.dark)
+ part(hoist,"HoistHook",V(0.5,0.9,0.5),CF(x+V(0,ROOF_TOP+2.2,hz)),C.metal)
+ local station=Kit.model("ShaftHeadStation",kit)
+ part(station,"GeneratorSkid",V(6,3.2,4),CF(x+V(-7,ROOF_TOP+1.6,-4)),C.hull)
+ part(station,"GeneratorRoof",V(6.4,0.3,4.4),CF(x+V(-7,ROOF_TOP+3.3,-4)),C.hullDark)
+ Kit.label(part(station,"StationPlate",V(3.4,0.7,0.1),CF(x+V(-7,ROOF_TOP+2.4,-1.95))*A(0,math.pi,0),C.hullDark),"SHAFT HEAD / POWER",C.hiVis)
+ cylinder(station,"CableDrum",V(2.2,3,3),CF(x+V(-7,ROOF_TOP+1.5,0.6)),C.dark)
+ cable(station,x+V(-7,ROOF_TOP+1.4,2),x+V(-2,ROOF_TOP+1.4,hz-5),0.6)
+ crate(station,CF(x+V(7,ROOF_TOP+1.2,-6)),V(2.8,2.4,2.8))
+ crate(station,CF(x+V(8.5,ROOF_TOP+1,-2)),V(2.2,2,2.2))
+ for _,at in {V(-8,0,16),V(8,0,4)} do
+  local mast=Kit.model("PortableWorkLamp",kit)
   for i=0,2 do
-   part(mast,"TripodLeg",V(0.22,4.2,0.22),CF(x+at+V(math.sin(i*2.1)*0.85,ROOF_Y+3.1,math.cos(i*2.1)*0.85))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal)
+   part(mast,"TripodLeg",V(0.22,4.2,0.22),CF(x+at+V(math.sin(i*2.1)*0.85,ROOF_TOP+2.1,math.cos(i*2.1)*0.85))*A(math.cos(i*2.1)*0.2,0,-math.sin(i*2.1)*0.2),C.metal)
   end
-  local lens=part(mast,"LampLens",V(1.5,0.85,0.12),CF(x+at+V(0,ROOF_Y+5.4,-0.55)),C.warm,Enum.Material.Neon,nil,0.28)
+  local lens=part(mast,"LampLens",V(1.5,0.85,0.12),CF(x+at+V(0,ROOF_TOP+4.4,-0.55)),C.warm,Enum.Material.Neon,nil,0.28)
   lens.CastShadow=false
   local beam=Instance.new("SpotLight")
   beam.Face=Enum.NormalId.Front;beam.Angle=92;beam.Range=24;beam.Brightness=1.1;beam.Color=Color3.fromRGB(255,226,186)
   beam.Parent=lens
-  part(mast,"LampBody",V(1.9,1.1,0.9),CF(x+at+V(0,ROOF_Y+5.4,0)),C.metal,Enum.Material.DiamondPlate)
+  table.insert(env.postExcavationKit,{light=beam,brightness=beam.Brightness})
+  part(mast,"LampBody",V(1.9,1.1,0.9),CF(x+at+V(0,ROOF_TOP+4.4,0)),C.metal,Enum.Material.DiamondPlate)
  end
-
- -- The expedition's power and survey kit on the structure: the cable that
- -- later reaches Aegis Zero's chest physically starts here.
- local station=Kit.model("ShaftHeadStation",pit)
- part(station,"GeneratorSkid",V(6,3.2,4),CF(x+V(-9,ROOF_Y+3.6,-8)),C.hull)
- part(station,"GeneratorRoof",V(6.4,0.3,4.4),CF(x+V(-9,ROOF_Y+5.3,-8)),C.hullDark)
- Kit.label(part(station,"StationPlate",V(3.4,0.7,0.1),CF(x+V(-9,ROOF_Y+4.4,-5.95))*A(0,math.pi,0),C.hullDark),"SHAFT HEAD / POWER",C.hiVis)
- cylinder(station,"CableDrum",V(2.2,3,3),CF(x+V(-9,ROOF_Y+3.5,-3.4)),C.dark)
- cable(station,x+V(-9,ROOF_Y+3.4,-2),x+V(0,ROOF_Y+1.4,2.6),0.6)
- crate(station,CF(x+V(6,ROOF_Y+3.2,7)),V(2.8,2.4,2.8))
- crate(station,CF(x+V(9,ROOF_Y+3,9)),V(2.2,2,2.2))
- part(station,"FieldTable",V(4,0.2,2.2),CF(x+V(6.5,ROOF_Y+4.2,4)),C.metal,Enum.Material.DiamondPlate)
- for _,side in {-1,1} do
-  part(station,"TableLeg",V(0.2,2.8,0.2),CF(x+V(6.5+side*1.7,ROOF_Y+2.7,4)),C.metal)
+ for _,item in kit:GetDescendants() do
+  if item:IsA("BasePart") then
+   table.insert(env.postExcavationKit,{part=item,transparency=item.Transparency,query=item.CanQuery})
+  end
  end
- -- A tarp shelter over the rim station, so the top of the cut is not empty.
- part(pit,"RimShelterRoof",V(9,0.2,7),CF(x+V(-24,4.6,12))*A(0.1,0,0),C.hiVis,Enum.Material.Fabric)
- for _,corner in {V(-28,0,9),V(-20,0,9),V(-28,0,15),V(-20,0,15)} do
-  Kit.beam(pit,"ShelterPost",x+corner+V(0,1,0),x+corner+V(0,4.6,0),0.14,C.metal)
- end
- -- Falling spindrift down the cut: the Arctic is still happening above them.
- local drift=part(pit,"CutSpindrift",V(40,2,40),CF(x+V(0,-2,0)),C.snow,nil,nil,1)
- local mist=Kit.dust(drift,22,C.snow,3)
- mist.Acceleration=V(1,-7,0)
- mist.Size=NumberSequence.new(0.3)
- table.insert(env.weather,mist)
+ Env.setExcavationProgress(env,0)
 end
 
 local function interiors(env,rng)
@@ -4487,9 +5105,7 @@ local function interiors(env,rng)
  -- Equipment racks, one with its maintenance panel off and leaning on it.
  for _,side in {-1,1} do
   local rack=Kit.model("EquipmentRack",ops)
-  fpart("RackFrame",V(4,7,2),CF(d+V(side*15,3.5,-14))).Parent=rack
-  local frame=rack:FindFirstChild("RackFrame")
-  if frame then frame.Color=C.facComposite end
+  fpart("RackFrame",V(4,7,2),CF(d+V(side*15,3.5,-14)),C.facComposite).Parent=rack
   for n=1,7 do
    fpart("RackUnit",V(3.5,0.66,0.3),CF(d+V(side*15,0.9+n*0.85,-13.1)),C.facMetal).Parent=rack
   end
@@ -5070,6 +5686,57 @@ end
 -- How much of the drilling montage has elapsed, 0..1. Drives the snow that
 -- banks up on the plant, which is the passage of time the audience can see
 -- without reading a number off a screen.
+--[[
+ How much of the cut has been dug, 0..1. The ice over the roof goes fastest
+ under the gantry and slowest at the far ends, so the roof appears from the
+ middle outward and a partly-dug cut shows a stepped working face rather than
+ a uniformly sinking floor. Absolute: the picture is a function of `amount`
+ alone, so a shot can be re-entered or scrubbed.
+
+ Returns the height of the ice surface under the gantry (relative to the
+ ground), which is where the cutter head has to be to be cutting.
+]]
+local EXCAVATION_LAG=0.45
+function Env.setExcavationProgress(env,amount: number): number
+ local a=math.clamp(amount or 0,0,1)
+ env.excavationProgress=a
+ local x=Env.Zones.Excavation
+ local depth=-Env.Cut.floor
+ local centreTop=-depth
+ for _,strip in env.excavationIceCover do
+  local lag=math.abs(strip.z)/Env.Cut.halfLength*EXCAVATION_LAG
+  local p=math.clamp((a-lag)/(1-EXCAVATION_LAG),0,1)
+  local height=depth*(1-p)
+  if height<0.05 then
+   strip.part.Transparency=1
+  else
+   strip.part.Transparency=0
+   strip.part.Size=V(strip.width,height,strip.length)
+   strip.part.CFrame=CF(x+V(0,Env.Cut.floor+height/2,strip.z))
+  end
+  if math.abs(strip.z)<Env.Cut.halfLength/3 then centreTop=math.max(centreTop,Env.Cut.floor+height) end
+ end
+ env.cutMistHost.CFrame=CF(x+V(0,math.max(centreTop,Env.Cut.roofTop)+0.3,0))
+ -- The kit at the bottom exists only once there is a bottom to stand on.
+ local complete=a>=0.999
+ for _,entry in env.postExcavationKit do
+  if entry.part then
+   entry.part.Transparency=complete and entry.transparency or 1
+   entry.part.CanQuery=complete and entry.query or false
+  else
+   entry.light.Brightness=complete and entry.brightness or 0
+  end
+ end
+ return centreTop
+end
+-- The cut depth (ExcavationRig's 0..1) that puts the cutter head's teeth on an
+-- ice surface at `surfaceY`, so the head is visibly IN the cut rather than
+-- hovering over it or buried in it.
+function Env.cutterDepthFor(surfaceY: number): number
+ local D=ExcavationRig.Dimensions
+ local bottomAtRest=D.headRestY-D.headSize.Y/2
+ return math.clamp((bottomAtRest-(surfaceY+0.3))/D.cutTravel,0,1)
+end
 function Env.setBoreWeathering(env,amount: number)
  local a=math.clamp(amount or 0,0,1)
  for _,cap in env.boreSnowCaps do
@@ -7965,6 +8632,7 @@ local Performance=require(script.Parent.PerformanceDirector)
 local Sequences={}
 local N=Config.Cinematic.Names
 local Z=Env.Zones
+local CUT=Env.Cut
 local V,CF,A=Vector3.new,CFrame.new,CFrame.Angles
 export type UI=any
 export type CastState=any
@@ -8008,12 +8676,20 @@ local STAGING={
   {at=V(9.2,2.95,-10.6),look=V(-14,3,-22),job="CheckingTablet"},
   {at=V(14.6,3.1,-8.4),look=V(6,3,-14),job="Authority"},
  }},
- -- On the exposed structure at the bottom of the cut, clear of the hatch
- -- throat, the hoist legs, the generator skid and both portable lamps.
+ -- At the rim of the cut, behind the barrier, while the gantry works: the
+ -- three people who asked for this, watching it happen.
+ ExcavationRim={origin="Excavation",marks={
+  {at=V(2.5,2.8,23.6),look=V(0,-6,0),job="Monitoring"},
+  {at=V(-1,2.95,24.6),look=V(0,-6,0),job="CheckingTablet"},
+  {at=V(6.5,3.1,26),look=V(0,4,0),job="Authority"},
+ }},
+ -- On the exposed roof at the bottom of the finished cut (top at y=-12),
+ -- clear of the hatch coaming, the hoist legs, the generator skid, the crates
+ -- and the foot of the scaffold.
  Excavation={origin="Excavation",marks={
-  {at=V(-3.5,-20.9,-6.5),look=V(0,-21,0),job="Scan"},
-  {at=V(-6.5,-20.9,-5.3),look=V(0,-21,0),job="CheckingTablet"},
-  {at=V(-2,-20.9,-9.8),look=V(-3,-21,-4),job="Authority"},
+  {at=V(3,-9.2,-10.4),look=V(0,-10,11.5),job="Scan"},
+  {at=V(0.2,-9.05,-10.2),look=V(0,-10,11.5),job="CheckingTablet"},
+  {at=V(-2.8,-8.9,-10.8),look=V(-1,-10,0),job="Authority"},
  }},
  -- Inside the facility: first at the foot of the entry shaft, then in the
  -- operations bay, then before the gate. Three rooms, three blockings, which
@@ -8344,7 +9020,7 @@ function Sequences.build(env,c,ui): {Shot}
   local spec=FRAMING[kind] or FRAMING.Medium
   op.speaker=who;op.text=text;op.stage=stageName;op.expression=emotion;op.voice=voice
   -- Each staging area's own mood, so a dialogue shot never has to restate it.
-  local STAGE_LIGHT={Command="Command",Bore="Exterior",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
+  local STAGE_LIGHT={Command="Command",Bore="Exterior",ExcavationRim="Cut",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
   op.light=op.light or STAGE_LIGHT[stageName] or "Chamber"
   if stageName=="Bore" then op.advance=op.advance or 1 end
   op.fov=op.fov or spec.fov
@@ -8657,28 +9333,110 @@ function Sequences.build(env,c,ui): {Shot}
  end})
  human("07f2_HaleWiden",2.4,N.Hale,"Then stop boring and start digging. I want to stand on it.","Bore","Determined","HaleWiden",{shot="Over"})
  --[[
-  AND THEN THE CUT. Deliberately a hard jump forward in time - no shot of
-  anybody digging - so the audience arrives at the bottom of a finished
-  excavation the same way the characters arrive at a finished day's work.
-  Stepped ice benches, a scaffold down one side, rim lamps, and at the
-  bottom of it a flat black roof with bronze conduit running out of it and
-  into the ice. Nothing about that is snow disappearing to reveal a door.
+  AND THEN THE CUT - shown, not skipped.
+
+  The bore FOUND the structure; it cannot expose it. A hose a few
+  centimetres wide does not become a hole people can climb down, and the
+  old cut straight to a finished pit left the audience to fill that gap in.
+  So the next five shots are the second machine: an excavation gantry the
+  expedition brought in once they knew what was down there.
+
+      07g  the gantry, established - with people in frame, and the bore
+           plant beside it looking like the small instrument it is
+      07h  it starts: carriage travels, cutter turns, steam
+      07i  the head goes into the ice - several times the size of a person
+      07j  enough is gone that a flat, seamed, ribbed surface shows through
+           the middle of the cut: the "NON-ICE / REGULAR" from the console,
+           in the flesh
+      07k  finished: the roof, the bulkhead and the scaffold down to it,
+           workers on the rim, the machine parked over it all
+
+  Every shot drives the same four numbers (Env.setExcavationProgress plus
+  the rig's carriage/depth/spin), each from its own absolute range, so any
+  shot can be entered cold and look right.
  ]]
- add("07g_StructureExposed",5.6,function() return Z.Excavation+V(-2,-19,4) end,V(20,32,30),{light="Cut",fov=58,stage="Excavation",to=V(12,22,20),pace="Slow",cue="Music.ScientificDiscovery",enter=function()
-  ui.setTitleCard({"THE OPEN CUT","Nine days later"},"Location")
+ local X=Z.Excavation
+ local rig=env.excavationRig
+ local function excavate(progress,carriage,spin,steam)
+  local surface=Env.setExcavationProgress(env,progress)
+  rig.setCarriagePosition(carriage)
+  rig.setCutterSpin(spin)
+  rig.setSteam(steam)
+  env.cutMist.Rate=steam*14
+  return surface
+ end
+ -- People are the scale reference, so the crew are put ON the machine: one on
+ -- the service walkway, one at the operator station, one down by a crawler,
+ -- and a scientist watching from behind the rim barrier.
+ local function crewTheCut()
+  local cut=X+V(0,-4,0)
+  Cast.place(c.workers[1],rig.walkwayFloor+V(-7,2.8,0),cut)
+  Cast.place(c.workers[3],rig.operatorFloor+V(0.2,2.8,1),cut)
+  Cast.place(c.workers[2],X+V(-21.4,2.8,7.5),X+V(-16,3,2))
+  Cast.place(c.workers[4],X+V(-24.5,2.8,-1),X+V(-27,3,-6))
+  Cast.place(c.workers[5],X+V(-10,2.8,-21.6),cut)
+  Cast.place(c.scientists[6],X+V(-8.5,2.8,23),cut)
+  Cast.setActivity(c.workers[1],"Monitoring");Cast.setActivity(c.workers[3],"TypingConsole")
+  Cast.setActivity(c.workers[2],"CheckCable");Cast.setActivity(c.workers[4],"Monitoring")
+  Cast.setActivity(c.workers[5],"Monitoring");Cast.setActivity(c.scientists[6],"CheckingTablet")
+  for _,h in {c.workers[1],c.workers[3],c.workers[5],c.scientists[6]} do Cast.lookAt(h,cut) end
+ end
+ add("07g_ExcavationGantryEstablished",6.4,function() return X+V(-12,10,8) end,V(46,12,62),{light="Cut",fov=56,stage="ExcavationRim",to=V(40,10,56),pace="Slow",cue="Machinery.GantryIdle",foreground={rig.model},enter=function()
+  ui.setTitleCard({"THE OPEN CUT","Six days later"},"Location")
+  crewTheCut()
+  excavate(0,-0.7,0,0.05)
+  rig.setCutDepth(0)
  end,update=function(a)
   if a>0.55 then ui.setTitleCard(nil) end
  end,leave=function() ui.setTitleCard(nil) end})
+ -- Enough of the machine in frame that the audience can see WHAT is moving:
+ -- the carriage running out along the bridge, the head beginning to turn,
+ -- steam starting under it, a man on the walkway above it all.
+ add("07h_ExcavationBegins",4.8,function() return X+V(-2,15,0) end,V(30,0,28),{light="Cut",fov=52,pace="Slow",cue="Machinery.GantryStart",foreground={rig.model},update=function(a)
+  local eased=Kit.smooth(a)
+  local surface=excavate(a*0.06,-0.7+eased*0.6,a*a*0.9,0.1+a*0.6)
+  rig.setCutDepth(math.min(Env.cutterDepthFor(surface),a*0.35))
+ end})
+ -- Low, from the rim, looking up: the head in the ice at the bottom of frame,
+ -- the bridge and the man on its walkway at the top. The contact line itself
+ -- is left to the steam.
+ add("07i_CutterDescends",5.2,function() return X+V(-2,4,0) end,V(5,-1,15),{light="Cut",fov=62,pace="Slow",cue="Machinery.CutterLoad",foreground={rig.model},update=function(a)
+  local surface=excavate(0.06+a*0.36,-0.1+math.sin(a*math.pi)*0.25,0.9+a*2.6,0.75)
+  rig.setCutDepth(Env.cutterDepthFor(surface))
+ end})
+ -- The payoff to "NON-ICE / REGULAR". Looking down into the middle of the
+ -- cut, which is where the gantry has gone deepest: a flat dark surface with
+ -- a straight seam across it and ribs at an even pitch, and grey ice still
+ -- standing at both ends of the working.
+ add("07j_StructureRoofExposed",5.2,function() return X+V(-3,-10.8,-6) end,V(8,30,-22),{light="Cut",fov=54,pace="Slow",cue="Music.ScientificDiscovery",foreground={rig.model},speaker=N.Voss,text="Straight edges. Seams. Somebody built this.",voice="VossBuilt",enter=function()
+  -- Seen from almost directly above, the rim worker by the scaffold reads as
+  -- somebody lying on the ice. He steps back to the ice-block stack for this
+  -- one shot.
+  Cast.place(c.workers[5],X+V(-24,2.8,-19),X+V(-28,3,-14))
+ end,update=function(a)
+  local surface=excavate(0.5+a*0.22,0.9-a*0.2,3.6+a*2.4,0.55)
+  rig.setCutDepth(Env.cutterDepthFor(surface))
+ end})
+ -- Finished. Held long enough to read the geography: the machine parked up
+ -- over the cut, the roof and its bulkhead at the bottom, the scaffold that
+ -- leads down to them, people round the rim.
+ add("07k_AccessTunnelRevealed",6.8,function() return X+V(0,-9,4) end,V(24,34,30),{light="Cut",fov=56,stage="ExcavationRim",to=V(21,31,27),pace="Slow",cue="Music.ArcticMystery",foreground={rig.model},enter=function()
+  crewTheCut()
+  Cast.place(c.workers[5],X+V(-3.4,-9.2,-12),X+V(0,-10,CUT.hatchZ))
+ end,update=function()
+  excavate(1,0.85,6,0.12)
+  rig.setCutDepth(0.08)
+ end})
 
  --[[
   ============================================================================
   08 - THE WAY IN
   ============================================================================
  ]]
- add("08a_AccessHatch",3.6,function() return env.hatchThroat end,V(7,7,9),{light="Cut",fov=48,pace="Slow",speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
+ add("08a_AccessHatch",3.6,function() return X+V(0,CUT.roofTop+0.6,CUT.hatchZ) end,V(8,7,-7),{light="Cut",fov=48,stage="Excavation",pace="Slow",foreground={env.hatchHoist},speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
  add("08b_Descent",4.2,function() return c.lyra.head end,V(6,3,-9),{light="Cut",fov=52,focusOffset=V(0,-0.7,0),cue="Music.ArcticMystery",update=function(a)
-  Cast.walk(c.lyra,Z.Excavation+V(-3.5,-23,-6.5),Z.Excavation+V(-1.4,-23,-3.6),a)
-  Cast.walk(c.voss,Z.Excavation+V(-6.5,-22.9,-4),Z.Excavation+V(-4.2,-22.9,-2.2),a)
+  Cast.walk(c.lyra,X+V(2.5,CUT.roofTop+1,-7),X+V(2,CUT.roofTop+1,2.5),a)
+  Cast.walk(c.voss,X+V(-1,CUT.roofTop+1.1,-8),X+V(-1.8,CUT.roofTop+1.1,1.5),a)
  end})
 
  --[[
@@ -9129,8 +9887,14 @@ local CAPTURES={
  {"07c_BoreProgress",1.0},
  {"07d_PressureDrop",0.5},
  {"07e_UnexpectedVoid",0.5},
- {"07g_StructureExposed",0.0},
- {"07g_StructureExposed",1.0},
+ -- The excavation: gantry established (scale), started, cutting, the roof
+ -- coming through, and the finished cut.
+ {"07g_ExcavationGantryEstablished",0.5},
+ {"07h_ExcavationBegins",1.0},
+ {"07i_CutterDescends",0.6},
+ {"07j_StructureRoofExposed",0.0},
+ {"07j_StructureRoofExposed",1.0},
+ {"07k_AccessTunnelRevealed",0.5},
  {"08a_AccessHatch",0.5},
  {"09a_AbandonedLabEntry",0.5},
  {"09b_DeadWorkstation",0.5},

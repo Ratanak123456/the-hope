@@ -13,6 +13,7 @@ local Performance=require(script.Parent.PerformanceDirector)
 local Sequences={}
 local N=Config.Cinematic.Names
 local Z=Env.Zones
+local CUT=Env.Cut
 local V,CF,A=Vector3.new,CFrame.new,CFrame.Angles
 export type UI=any
 export type CastState=any
@@ -56,12 +57,20 @@ local STAGING={
   {at=V(9.2,2.95,-10.6),look=V(-14,3,-22),job="CheckingTablet"},
   {at=V(14.6,3.1,-8.4),look=V(6,3,-14),job="Authority"},
  }},
- -- On the exposed structure at the bottom of the cut, clear of the hatch
- -- throat, the hoist legs, the generator skid and both portable lamps.
+ -- At the rim of the cut, behind the barrier, while the gantry works: the
+ -- three people who asked for this, watching it happen.
+ ExcavationRim={origin="Excavation",marks={
+  {at=V(2.5,2.8,23.6),look=V(0,-6,0),job="Monitoring"},
+  {at=V(-1,2.95,24.6),look=V(0,-6,0),job="CheckingTablet"},
+  {at=V(6.5,3.1,26),look=V(0,4,0),job="Authority"},
+ }},
+ -- On the exposed roof at the bottom of the finished cut (top at y=-12),
+ -- clear of the hatch coaming, the hoist legs, the generator skid, the crates
+ -- and the foot of the scaffold.
  Excavation={origin="Excavation",marks={
-  {at=V(-3.5,-20.9,-6.5),look=V(0,-21,0),job="Scan"},
-  {at=V(-6.5,-20.9,-5.3),look=V(0,-21,0),job="CheckingTablet"},
-  {at=V(-2,-20.9,-9.8),look=V(-3,-21,-4),job="Authority"},
+  {at=V(3,-9.2,-10.4),look=V(0,-10,11.5),job="Scan"},
+  {at=V(0.2,-9.05,-10.2),look=V(0,-10,11.5),job="CheckingTablet"},
+  {at=V(-2.8,-8.9,-10.8),look=V(-1,-10,0),job="Authority"},
  }},
  -- Inside the facility: first at the foot of the entry shaft, then in the
  -- operations bay, then before the gate. Three rooms, three blockings, which
@@ -392,7 +401,7 @@ function Sequences.build(env,c,ui): {Shot}
   local spec=FRAMING[kind] or FRAMING.Medium
   op.speaker=who;op.text=text;op.stage=stageName;op.expression=emotion;op.voice=voice
   -- Each staging area's own mood, so a dialogue shot never has to restate it.
-  local STAGE_LIGHT={Command="Command",Bore="Exterior",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
+  local STAGE_LIGHT={Command="Command",Bore="Exterior",ExcavationRim="Cut",Excavation="Cut",LabEntry="Lab",Lab="Lab",GateHall="Lab"}
   op.light=op.light or STAGE_LIGHT[stageName] or "Chamber"
   if stageName=="Bore" then op.advance=op.advance or 1 end
   op.fov=op.fov or spec.fov
@@ -705,28 +714,110 @@ function Sequences.build(env,c,ui): {Shot}
  end})
  human("07f2_HaleWiden",2.4,N.Hale,"Then stop boring and start digging. I want to stand on it.","Bore","Determined","HaleWiden",{shot="Over"})
  --[[
-  AND THEN THE CUT. Deliberately a hard jump forward in time - no shot of
-  anybody digging - so the audience arrives at the bottom of a finished
-  excavation the same way the characters arrive at a finished day's work.
-  Stepped ice benches, a scaffold down one side, rim lamps, and at the
-  bottom of it a flat black roof with bronze conduit running out of it and
-  into the ice. Nothing about that is snow disappearing to reveal a door.
+  AND THEN THE CUT - shown, not skipped.
+
+  The bore FOUND the structure; it cannot expose it. A hose a few
+  centimetres wide does not become a hole people can climb down, and the
+  old cut straight to a finished pit left the audience to fill that gap in.
+  So the next five shots are the second machine: an excavation gantry the
+  expedition brought in once they knew what was down there.
+
+      07g  the gantry, established - with people in frame, and the bore
+           plant beside it looking like the small instrument it is
+      07h  it starts: carriage travels, cutter turns, steam
+      07i  the head goes into the ice - several times the size of a person
+      07j  enough is gone that a flat, seamed, ribbed surface shows through
+           the middle of the cut: the "NON-ICE / REGULAR" from the console,
+           in the flesh
+      07k  finished: the roof, the bulkhead and the scaffold down to it,
+           workers on the rim, the machine parked over it all
+
+  Every shot drives the same four numbers (Env.setExcavationProgress plus
+  the rig's carriage/depth/spin), each from its own absolute range, so any
+  shot can be entered cold and look right.
  ]]
- add("07g_StructureExposed",5.6,function() return Z.Excavation+V(-2,-19,4) end,V(20,32,30),{light="Cut",fov=58,stage="Excavation",to=V(12,22,20),pace="Slow",cue="Music.ScientificDiscovery",enter=function()
-  ui.setTitleCard({"THE OPEN CUT","Nine days later"},"Location")
+ local X=Z.Excavation
+ local rig=env.excavationRig
+ local function excavate(progress,carriage,spin,steam)
+  local surface=Env.setExcavationProgress(env,progress)
+  rig.setCarriagePosition(carriage)
+  rig.setCutterSpin(spin)
+  rig.setSteam(steam)
+  env.cutMist.Rate=steam*14
+  return surface
+ end
+ -- People are the scale reference, so the crew are put ON the machine: one on
+ -- the service walkway, one at the operator station, one down by a crawler,
+ -- and a scientist watching from behind the rim barrier.
+ local function crewTheCut()
+  local cut=X+V(0,-4,0)
+  Cast.place(c.workers[1],rig.walkwayFloor+V(-7,2.8,0),cut)
+  Cast.place(c.workers[3],rig.operatorFloor+V(0.2,2.8,1),cut)
+  Cast.place(c.workers[2],X+V(-21.4,2.8,7.5),X+V(-16,3,2))
+  Cast.place(c.workers[4],X+V(-24.5,2.8,-1),X+V(-27,3,-6))
+  Cast.place(c.workers[5],X+V(-10,2.8,-21.6),cut)
+  Cast.place(c.scientists[6],X+V(-8.5,2.8,23),cut)
+  Cast.setActivity(c.workers[1],"Monitoring");Cast.setActivity(c.workers[3],"TypingConsole")
+  Cast.setActivity(c.workers[2],"CheckCable");Cast.setActivity(c.workers[4],"Monitoring")
+  Cast.setActivity(c.workers[5],"Monitoring");Cast.setActivity(c.scientists[6],"CheckingTablet")
+  for _,h in {c.workers[1],c.workers[3],c.workers[5],c.scientists[6]} do Cast.lookAt(h,cut) end
+ end
+ add("07g_ExcavationGantryEstablished",6.4,function() return X+V(-12,10,8) end,V(46,12,62),{light="Cut",fov=56,stage="ExcavationRim",to=V(40,10,56),pace="Slow",cue="Machinery.GantryIdle",foreground={rig.model},enter=function()
+  ui.setTitleCard({"THE OPEN CUT","Six days later"},"Location")
+  crewTheCut()
+  excavate(0,-0.7,0,0.05)
+  rig.setCutDepth(0)
  end,update=function(a)
   if a>0.55 then ui.setTitleCard(nil) end
  end,leave=function() ui.setTitleCard(nil) end})
+ -- Enough of the machine in frame that the audience can see WHAT is moving:
+ -- the carriage running out along the bridge, the head beginning to turn,
+ -- steam starting under it, a man on the walkway above it all.
+ add("07h_ExcavationBegins",4.8,function() return X+V(-2,15,0) end,V(30,0,28),{light="Cut",fov=52,pace="Slow",cue="Machinery.GantryStart",foreground={rig.model},update=function(a)
+  local eased=Kit.smooth(a)
+  local surface=excavate(a*0.06,-0.7+eased*0.6,a*a*0.9,0.1+a*0.6)
+  rig.setCutDepth(math.min(Env.cutterDepthFor(surface),a*0.35))
+ end})
+ -- Low, from the rim, looking up: the head in the ice at the bottom of frame,
+ -- the bridge and the man on its walkway at the top. The contact line itself
+ -- is left to the steam.
+ add("07i_CutterDescends",5.2,function() return X+V(-2,4,0) end,V(5,-1,15),{light="Cut",fov=62,pace="Slow",cue="Machinery.CutterLoad",foreground={rig.model},update=function(a)
+  local surface=excavate(0.06+a*0.36,-0.1+math.sin(a*math.pi)*0.25,0.9+a*2.6,0.75)
+  rig.setCutDepth(Env.cutterDepthFor(surface))
+ end})
+ -- The payoff to "NON-ICE / REGULAR". Looking down into the middle of the
+ -- cut, which is where the gantry has gone deepest: a flat dark surface with
+ -- a straight seam across it and ribs at an even pitch, and grey ice still
+ -- standing at both ends of the working.
+ add("07j_StructureRoofExposed",5.2,function() return X+V(-3,-10.8,-6) end,V(8,30,-22),{light="Cut",fov=54,pace="Slow",cue="Music.ScientificDiscovery",foreground={rig.model},speaker=N.Voss,text="Straight edges. Seams. Somebody built this.",voice="VossBuilt",enter=function()
+  -- Seen from almost directly above, the rim worker by the scaffold reads as
+  -- somebody lying on the ice. He steps back to the ice-block stack for this
+  -- one shot.
+  Cast.place(c.workers[5],X+V(-24,2.8,-19),X+V(-28,3,-14))
+ end,update=function(a)
+  local surface=excavate(0.5+a*0.22,0.9-a*0.2,3.6+a*2.4,0.55)
+  rig.setCutDepth(Env.cutterDepthFor(surface))
+ end})
+ -- Finished. Held long enough to read the geography: the machine parked up
+ -- over the cut, the roof and its bulkhead at the bottom, the scaffold that
+ -- leads down to them, people round the rim.
+ add("07k_AccessTunnelRevealed",6.8,function() return X+V(0,-9,4) end,V(24,34,30),{light="Cut",fov=56,stage="ExcavationRim",to=V(21,31,27),pace="Slow",cue="Music.ArcticMystery",foreground={rig.model},enter=function()
+  crewTheCut()
+  Cast.place(c.workers[5],X+V(-3.4,-9.2,-12),X+V(0,-10,CUT.hatchZ))
+ end,update=function()
+  excavate(1,0.85,6,0.12)
+  rig.setCutDepth(0.08)
+ end})
 
  --[[
   ============================================================================
   08 - THE WAY IN
   ============================================================================
  ]]
- add("08a_AccessHatch",3.6,function() return env.hatchThroat end,V(7,7,9),{light="Cut",fov=48,pace="Slow",speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
+ add("08a_AccessHatch",3.6,function() return X+V(0,CUT.roofTop+0.6,CUT.hatchZ) end,V(8,7,-7),{light="Cut",fov=48,stage="Excavation",pace="Slow",foreground={env.hatchHoist},speaker=N.Voss,text="It was sealed from the inside.",voice="VossSealedInside"})
  add("08b_Descent",4.2,function() return c.lyra.head end,V(6,3,-9),{light="Cut",fov=52,focusOffset=V(0,-0.7,0),cue="Music.ArcticMystery",update=function(a)
-  Cast.walk(c.lyra,Z.Excavation+V(-3.5,-23,-6.5),Z.Excavation+V(-1.4,-23,-3.6),a)
-  Cast.walk(c.voss,Z.Excavation+V(-6.5,-22.9,-4),Z.Excavation+V(-4.2,-22.9,-2.2),a)
+  Cast.walk(c.lyra,X+V(2.5,CUT.roofTop+1,-7),X+V(2,CUT.roofTop+1,2.5),a)
+  Cast.walk(c.voss,X+V(-1,CUT.roofTop+1.1,-8),X+V(-1.8,CUT.roofTop+1.1,1.5),a)
  end})
 
  --[[

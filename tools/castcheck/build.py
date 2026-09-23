@@ -63,6 +63,7 @@ sources=[
  ("VehicleMotion","src/client/NorthPole/VehicleMotion.lua"),
  ("GlyphLanguage","src/client/NorthPole/GlyphLanguage.lua"),
  ("Instrumentation","src/client/NorthPole/Instrumentation.lua"),
+ ("ExcavationRig","src/client/NorthPole/ExcavationRig.lua"),
  ("Env","src/client/NorthPole/Env.lua"),
  ("CharacterAppearance","src/client/NorthPole/CharacterAppearance.lua"),
  ("Cast","src/client/NorthPole/Cast.lua"),

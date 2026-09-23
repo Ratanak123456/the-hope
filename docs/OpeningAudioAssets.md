@@ -39,6 +39,9 @@ Three sound identities are kept strictly apart, the same way the picture keeps t
 | `Machinery.LinePressureLoss` | Line pressure collapsing: pump note rising as the load disappears, hose slapping the reel, one mechanical alarm. No musical sting. |
 | `Machinery.ReturnLost` | Return flow stopping. Mostly the ABSENCE of the circulation the mix has carried for the whole montage, plus a console alert tone. |
 | `Machinery.HardReturn` | The bore head touching something hard and flat: a bright metallic contact quite unlike ice, reported through hose and steel. |
+| `Machinery.GantryIdle` | The excavation gantry at idle: a big diesel power pack ticking over and the hot-water plant's circulation, heard from the rim. |
+| `Machinery.GantryStart` | The gantry starting work: carriage drive engaging, hoist brakes releasing, the cutter head spinning up and steam starting. |
+| `Machinery.CutterLoad` | The cutter under load in the ice: a heavy grinding hiss, slush pumping away through the return line. |
 | `Machinery.PowerConnection` | Expedition power connected to ancient hardware: cable slap, breakers closing, an inverter note. |
 | `Machinery.GateUnlock` | The containment gate unlocking: dogs withdrawing, drums turning under load, two heavy leaves parting. Mechanical, never magical. |
 | `Machinery.SealSeparates` | The chamber's iris separating under strain. |
@@ -127,6 +130,7 @@ Three sound identities are kept strictly apart, the same way the picture keeps t
 | `Dialogue.LyraNoCavity` | Lyra: There is no cavity in this ice. There never has been. |
 | `Dialogue.VossNonIce` | Voss: Something down there is returning a flat signal. A machined surface. |
 | `Dialogue.HaleWiden` | Hale: Then stop boring and start digging. I want to stand on it. |
+| `Dialogue.VossBuilt` | Voss: Straight edges. Seams. Somebody built this. |
 | `Dialogue.VossSealedInside` | Voss: It was sealed from the inside. |
 | `Dialogue.VossNoPower` | Voss: There is no power anywhere in this structure. Not a volt. |
 | `Dialogue.LyraWalkedOut` | Lyra: Nobody shut this down. They walked out of it. |
