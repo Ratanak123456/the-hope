@@ -225,6 +225,8 @@ end
  skewed - the three things that made the old dialogue coverage read as
  unstable and extreme.
 ]]
+-- Over-the-shoulder lens, relative to the listener's head (see human()).
+local OTS_BACK,OTS_ACROSS,OTS_LIFT=3.6,1.7,1.1
 local FRAMING={
  -- Height raised from 2.6: at eye level the workstation island ran across the
  -- bottom-right third of the master as one pale, empty plane and was the
@@ -377,6 +379,11 @@ function Sequences.build(env,c,ui): {Shot}
   op.stage=stageName
   op.fov=op.fov or spec.fov
   op.pace=op.pace or "Slow"
+  -- The leads ARE the master's subject, and the focus is the centroid of
+  -- their marks, so the sightline always passes close by the nearest of them.
+  -- With the Roblox-proportioned heads that grazed one mid-take and the
+  -- camera orbited away (Studio, 06_CommandMaster / 06i_BeginDrilling).
+  op.foreground=op.foreground or {c.lyra.model,c.voss.model,c.hale.model}
   return add(name,dur,function() return centre+V(0,spec.focusDrop,0) end,
    direction*spec.distance+right*spec.lateral+V(0,spec.height,0),op)
  end
@@ -442,14 +449,24 @@ function Sequences.build(env,c,ui): {Shot}
      with the speaker's head small behind it. Pulled back to 3.4 and out to
      1.9, the same head lands in the outer lower corner and is cropped by the
      frame edge, which is what an over-the-shoulder is supposed to look like.
+
+     Both numbers were tuned for the old 0.8-stud head. The Roblox-proportioned
+     head is 1.3 wide and a bob adds half a stud either side, so at 3.4/1.9 the
+     listener's hair covered half of every reverse (seen in Studio on
+     06a_HaleReport). Backing further off does NOT help: the listener sits
+     at lateral*D/(back+D) off the lens axis (D = listener to speaker), so a
+     longer throw pulls their head toward frame centre. What pushes it out is
+     the lateral offset, which now scales with Cast.HeadSize, plus a higher
+     lens that looks OVER the bigger head rather than into it.
     ]]
+    local k=Cast.HeadSize.X/0.8
     local focus=subject.head.Position-V(0,spec.focusDrop,0)
     local toward=(focus-other.head.Position)
     local flat=V(toward.X,0,toward.Z)
     if flat.Magnitude<0.5 then flat=V(facing.X,0,facing.Z) end
     flat=flat.Unit
-    local lateral=V(-flat.Z,0,flat.X)*side*1.9
-    shot.from=(other.head.Position-flat*3.4+lateral+V(0,0.5,0))-focus
+    local lateral=V(-flat.Z,0,flat.X)*side*OTS_ACROSS*k
+    shot.from=(other.head.Position-flat*OTS_BACK+lateral+V(0,OTS_LIFT,0))-focus
     -- The listener IS the foreground of this shot. Say so, or the camera's
     -- obstruction check reads them as a wall and collapses the framing into a
     -- close-up (see Camera.lua's `allowed`).
@@ -1107,7 +1124,7 @@ function Sequences.build(env,c,ui): {Shot}
  add("29d_EvacuationVehicles",2,function() return env.vehicles[5].model.PrimaryPart end,V(16,10,-22),{light="Exterior",fov=48,cue="Radio.CommunicationFailure",update=function(a,_,dt) Env.moveVehicle(env.vehicles[5],Z.BaseCenter+V(13,0,26),Z.BaseCenter+V(9,0,92),a,dt) end})
  add("29e_TowerFalls",1.7,function() return Z.BaseCenter+V(24,14,-20) end,V(30,6,48),{light="Exterior",cue="Impacts.FacilityCollapse",update=function(a) env.commTower:PivotTo(CF(Z.BaseCenter+V(24,0,-20))*A(0,0,-a*1.25)*CF(-Z.BaseCenter-V(24,0,-20))*env.towerBase) end})
  add("29f_InjuredEvacuation",1.8,function() return c.scientists[5].head end,V(3,1,-8),{light="Emergency",update=function(a)
-  Cast.walk(c.scientists[5],Z.ChamberFloor+V(14,2.8,28),Z.ChamberFloor+V(22,2.8,34),a);Cast.act(c.scientists[5],"Help","Afraid",c.soldiers[2].head.Position)
+  Cast.walk(c.scientists[5],Z.ChamberFloor+V(14,2.8,28),Z.ChamberFloor+V(24,2.8,37),a);Cast.act(c.scientists[5],"Help","Afraid",c.soldiers[2].head.Position)
  end})
  -- 30–32. Both faces and reaching hands at the lift, then core access gantry.
  human("30a_VossLeave",2,N.Voss,"Lyra! We have to leave!","Sacrifice","Afraid","VossLeave",{light="Emergency",enter=function()
@@ -1120,7 +1137,7 @@ function Sequences.build(env,c,ui): {Shot}
  human("31d_BuryItAgain",2.5,N.Lyra,"Then help me bury it again.","Sacrifice","Determined","LyraBury",{light="Emergency"})
  human("30b_NotLeavingYou",2,N.Voss,"I’m not leaving you!","Sacrifice","Sad","VossStay",{light="Emergency",action="Reach"})
  human("30c_TellThem",3.2,N.Lyra,"Someone has to tell them what happened here.","Sacrifice","Sad","LyraTell",{light="Emergency",action="Reach"})
- add("30d_ClosingLiftHands",2,function() return c.voss.hands.Left end,V(-3,1,-7),{light="Emergency",cue="Machinery.EmergencyDoor",update=function(a)
+ add("30d_ClosingLiftHands",2,function() return c.voss.hands.Left end,V(-3,1,-7),{light="Emergency",cue="Machinery.EmergencyDoor",foreground={c.voss.hands.Right},update=function(a)
   Cast.act(c.voss,"Reach","Sad",c.lyra.head.Position)
   for _,door in env.liftDoors do door.part.CFrame=door.base+V(-door.side*a*5.2,0,0) end
  end})

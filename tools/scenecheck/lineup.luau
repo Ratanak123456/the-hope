@@ -43,7 +43,9 @@ root.Parent=RBX.workspace
  SPACING. Wide enough that neighbours never overlap in the side view, which
  is the view most likely to hide a mistake behind the next person along.
 ]]
-local GAP=3.4
+-- 4.8, not 3.4: the Roblox-proportioned bodies are about 3.9 studs across
+-- the arms, so the old spacing put every neighbour inside the next one.
+local GAP=4.8
 local people={}
 local function place(label,builder)
  local x=#people*GAP
@@ -76,16 +78,41 @@ for _,entry in people do
  Cast.stepAnimate(entry.rig,2.6)
 end
 
+--[[
+ THE BENCHMARK: a plain classic-avatar dummy - six blocks, head 1.2, torso
+ 2.4 x 2.4 x 1.2, arms and legs 1.2 x 2.4 x 1.2 - stood one place to the left
+ of Lyra at the cast's own height. It answers the question this lineup exists
+ for ("does this read as a Roblox character?") by putting the reference in the
+ same frame, rather than leaving it to memory.
+]]
+do
+ local x=-GAP
+ local grey=Color3.fromRGB(150,152,156)
+ local function block(name,size,y,dx)
+  local part=Instance.new("Part")
+  part.Name=name;part.Size=size;part.Color=grey;part.Transparency=0
+  part.CFrame=CFrame.new(x+(dx or 0),y,0)
+  part.Parent=root
+ end
+ block("DummyLeftLeg",V(1.2,2.4,1.2),1.2,-0.6)
+ block("DummyRightLeg",V(1.2,2.4,1.2),1.2,0.6)
+ block("DummyTorso",V(2.4,2.4,1.2),3.6)
+ block("DummyLeftArm",V(1.2,2.4,1.2),3.6,-1.8)
+ block("DummyRightArm",V(1.2,2.4,1.2),3.6,1.8)
+ block("DummyHead",V(1.44,1.2,1.2),5.4)
+end
+
 local span=(#people-1)*GAP
 local centre=V(span/2,3.4,0)
 
-local function emit(out,tag,eye,target,fov)
+local function emit(out,tag,eye,target,fov,skipPrefix)
  local cf=CFrame.lookAt(eye,target)
  local look=cf.LookVector
  local parts={}
  for _,solid in RBX.solids do
   local transparency=rawget(solid,"Transparency") or 0
-  if transparency<0.92 then
+  local skipped=skipPrefix and string.sub(rawget(solid,"Name") or "",1,#skipPrefix)==skipPrefix
+  if transparency<0.92 and not skipped then
    local pcf=rawget(solid,"CFrame")
    local size=rawget(solid,"Size")
    local delta=pcf.Position-eye
@@ -142,17 +169,20 @@ local function group(tag,first,last,height,fov)
  emit(out,tag,mid+V(0,0.4,-distance),mid,fov)
  emit(out,tag.."-silhouette",mid+V(0,0.4,-distance),mid,fov)
 end
+group("group-benchmark",-1,2,3.2,34)
 group("group-leads",0,5,3.2,34)
 group("group-scientists",6,10,3.2,34)
 group("group-crew",11,16,3.2,34)
 -- The three leads on their own, at conversation distance, which is the scale
 -- the command room actually plays them at.
 local leads=V(GAP,3.2,0)
-emit(out,"leads-front",leads+V(0,0.4,-11),leads,42)
-emit(out,"leads-threequarter",leads+V(-7.5,1.4,-8.5),leads,42)
-emit(out,"leads-side",leads+V(-11,0.6,0.5),leads,42)
+emit(out,"leads-front",leads+V(0,0.4,-14),leads,42)
+emit(out,"leads-threequarter",leads+V(-10,1.4,-11),leads,42)
+-- Side-on, the three stand behind one another; from far enough out the
+-- nearest (Lyra) is the profile under review and the others add depth.
+emit(out,"leads-side",leads+V(-20,0.6,0.5),leads,30,"Dummy")
 -- THE ACCEPTANCE TEST: identity with every colour thrown away. render.py
 -- draws any tag containing "silhouette" as flat shapes.
-emit(out,"leads-silhouette",leads+V(0,0.4,-11),leads,42)
-emit(out,"leads-threequarter-silhouette",leads+V(-7.5,1.4,-8.5),leads,42)
+emit(out,"leads-silhouette",leads+V(0,0.4,-14),leads,42)
+emit(out,"leads-threequarter-silhouette",leads+V(-10,1.4,-11),leads,42)
 print("["..table.concat(out,",").."]")

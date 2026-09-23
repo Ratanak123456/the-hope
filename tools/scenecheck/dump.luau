@@ -30,6 +30,14 @@ local CAPTURES={
  {"06b_VossSignal",0.5},
  {"06c_HaleSpacecraft",0.5},
  {"06e_LyraCalling",0.5},
+ -- Every over-the-shoulder reverse. Their foreground is a listener's head,
+ -- so they are the shots most sensitive to the cast's head size.
+ {"06a_HaleReport",0.5},
+ {"06f_HaleQuestion",0.5},
+ {"07f2_HaleWiden",0.5},
+ {"09c2_HaleOpenIt",0.5},
+ {"11j_HaleBelowWhat",0.5},
+ {"12a_HaleWake",0.5},
  -- The bore, the discovery and the facility: one frame per beat this pass
  -- exists to build, so a composition change anywhere in it shows up in the
  -- offline render without having to drive Studio.

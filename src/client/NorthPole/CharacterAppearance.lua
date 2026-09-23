@@ -78,6 +78,11 @@ export type HairPiece = {
 	size: Vector3,
 	at: CFrame,
 	kind: string?,
+	-- Rises above the crown line; hidden under a hat or helmet so it cannot
+	-- punch through the shell.
+	tall: boolean?,
+	-- Overrides the style colour (a band, a clip).
+	color: Color3?,
 }
 
 export type FaceMetrics = {
@@ -89,13 +94,14 @@ export type FaceMetrics = {
 	browHeight: number,
 	browTilt: number,
 	mouthWidth: number,
+	eyeY: number,
+	mouthY: number,
 }
 
--- Width multipliers ONLY. Nothing here touches a joint offset, a pivot or a
--- limb LENGTH: the animation system was stabilised against the current rig's
--- geometry (sole drop, knee/elbow bend direction, hand-clear-of-torso) and a
--- silhouette pass is not the place to move any of that. Build reads as a
--- visual overlay plus a few percent of torso and arm thickness.
+-- Width multipliers ONLY. Nothing here touches a joint HEIGHT or a limb
+-- LENGTH: sole drop and the walk cycle depend on those. Cast derives the
+-- shoulder and hip spacing from the torso width, so a broad build's arms sit
+-- flush against its wider torso rather than inside it.
 export type BodyMetrics = {
 	torsoWidth: number,
 	armWidth: number,
@@ -172,6 +178,10 @@ local CLOTH = {
 	rust = rgb(132, 66, 62),
 	ivory = rgb(184, 184, 173),
 	hiVis = rgb(151, 116, 52),
+	-- A lab coat has to read as a lab coat at a glance, so it is the palest
+	-- garment in the film - and still inside the albedo budget castcheck
+	-- enforces.
+	labcoat = rgb(166, 170, 166),
 }
 
 Appearance.Hair = HAIR
@@ -181,163 +191,169 @@ Appearance.Cloth = CLOTH
 --------------------------------------------------------------------------------
 -- HAIR
 --
--- Two to six pieces per style, never more. The old single cap was one block
--- the width of the skull, which reads as a helmet at any distance and is
--- identical on everybody; these are built so the OUTLINE differs - where the
--- volume sits, how far down the sides come, whether there is a nape, whether
--- the fringe is centred.
+-- ROBLOX HAIR: a few big masses sitting ON a block head, not strands. Every
+-- style is two to six pieces and every piece is chunky - the smallest is a
+-- tenth of a stud thick, most are a third of a stud or more - because thin
+-- technical pieces on a head are what made the old cast read as a row of
+-- small mannequins rather than avatars.
 --
--- The head is 0.8 x 0.85 x 0.8 and the rig faces -Z, so the face sits at
--- z = -0.39..-0.40 with the brows at y = 0.17..0.21. Every fringe below
--- therefore bottoms out at y >= 0.21: a fringe that hangs any lower crosses
--- its own eyebrows, which is the classic procedural-hair failure.
+-- Head-local space for the 1.3 x 1.25 x 1.25 block head (Cast.HeadSize): the
+-- head spans x +-0.65, y +-0.625, z +-0.625, the rig faces -Z so the face
+-- plane is z = -0.625, and the brows sit at y ~0.23-0.33. Every fringe bottoms out at
+-- y >= 0.36 so it never crosses its own eyebrows.
+--
+-- Hair is deliberately WIDER than the skull (side masses at |x| 0.66-0.72):
+-- hair that stops at the skull line reads as a swim cap.
 --------------------------------------------------------------------------------
 
 local HAIR_STYLES: { [string]: { HairPiece } } = {
-	-- Lyra. Short layered bob: full crown, side layers ending around the jaw,
-	-- a short nape, and a deliberately ASYMMETRIC fringe - the left layer is
-	-- longer than the right, so her three-quarter outline is not the mirror
-	-- of itself and reads as a specific person rather than a hair preset.
+	-- Lyra. A short, chunky layered bob with wolf-cut edges: a full crown, a
+	-- heavy asymmetric fringe, side masses down to the jaw (the left longer
+	-- than the right), and a short choppy nape. Clearly short hair, and the
+	-- widest head outline of the three leads from any angle.
 	LayeredBob = {
-		{ name = "HairCrown", size = V(0.90, 0.26, 0.88), at = CF(0, 0.35, 0.04) },
-		-- The side layers sit PROUD of the skull (the head is 0.8 wide, these
-		-- are centred at 0.41), because a bob that stops at the skull line
-		-- reads as a swim cap. This is what makes her head wider than Voss's
-		-- in outline and not only in colour.
-		{ name = "HairSideLeft", size = V(0.24, 0.56, 0.64), at = CF(-0.41, 0.06, 0.05) },
-		{ name = "HairSideRight", size = V(0.22, 0.42, 0.60), at = CF(0.41, 0.14, 0.06) },
-		{ name = "HairBack", size = V(0.78, 0.44, 0.22), at = CF(0, 0.05, 0.39) },
-		{ name = "HairFringe", size = V(0.50, 0.22, 0.14), at = CF(-0.12, 0.31, -0.40) * A(0, 0, math.rad(-11)) },
+		{ name = "HairCrown", size = V(1.42, 0.42, 1.40), at = CF(0, 0.62, 0.04) },
+		-- The side masses FLARE: a second, wider block at jaw height gives the
+		-- bob its bell outline, which is what separates her head from Voss's
+		-- neat block in flat silhouette.
+		{ name = "HairSideLeft", size = V(0.28, 0.9, 1.1), at = CF(-0.71, 0.18, 0.08) },
+		{ name = "HairSideRight", size = V(0.26, 0.72, 1.06), at = CF(0.7, 0.27, 0.1) },
+		{ name = "HairFlareLeft", size = V(0.46, 0.42, 1.04), at = CF(-0.86, -0.2, 0.12) * A(0, 0, math.rad(-10)) },
+		{ name = "HairFlareRight", size = V(0.4, 0.36, 0.98), at = CF(0.84, -0.04, 0.14) * A(0, 0, math.rad(10)) },
+		{ name = "HairBack", size = V(1.38, 0.84, 0.28), at = CF(0, 0.16, 0.68) },
+		{ name = "HairFringe", size = V(0.9, 0.3, 0.26), at = CF(-0.2, 0.52, -0.66) * A(0, 0, math.rad(-11)) },
+		{ name = "HairTuft", size = V(0.5, 0.26, 0.5), at = CF(0.22, 0.84, 0.12) * A(0, math.rad(20), math.rad(-14)), tall = true },
 	},
-	-- Shorter and choppier than the bob, with a longer nape. Reads as a
-	-- modern short cut on anyone, which is the point: it is assigned to both
-	-- male- and female-presenting characters below.
+	-- Choppier than the bob, with a longer nape and a spiky top. A modern
+	-- short cut on anyone - assigned to male- and female-presenting people.
 	ShortWolf = {
-		{ name = "HairCrown", size = V(0.86, 0.26, 0.86), at = CF(0, 0.34, 0.03) },
-		{ name = "HairSideLeft", size = V(0.16, 0.42, 0.56), at = CF(-0.38, 0.13, 0.06) },
-		{ name = "HairSideRight", size = V(0.16, 0.38, 0.54), at = CF(0.38, 0.15, 0.07) },
-		{ name = "HairNape", size = V(0.56, 0.32, 0.17), at = CF(0, -0.03, 0.40) },
-		{ name = "HairFringe", size = V(0.50, 0.18, 0.13), at = CF(0.08, 0.32, -0.39) * A(0, 0, math.rad(7)) },
+		{ name = "HairCrown", size = V(1.38, 0.4, 1.36), at = CF(0, 0.6, 0.04) },
+		{ name = "HairSideLeft", size = V(0.22, 0.66, 0.92), at = CF(-0.68, 0.26, 0.1) },
+		{ name = "HairSideRight", size = V(0.22, 0.6, 0.9), at = CF(0.68, 0.29, 0.1) },
+		{ name = "HairNape", size = V(0.96, 0.6, 0.28), at = CF(0, -0.02, 0.68) },
+		{ name = "HairFringe", size = V(0.84, 0.26, 0.24), at = CF(0.12, 0.5, -0.65) * A(0, 0, math.rad(7)) },
+		{ name = "HairSpike", size = V(0.56, 0.3, 0.56), at = CF(-0.14, 0.86, 0.08) * A(0, math.rad(35), math.rad(12)), tall = true },
 	},
-	-- Voss. Controlled, combed, one heavy sweep over a low part; the tight
-	-- temple strips are what make it read as "kept" rather than "short".
+	-- Voss. Controlled and combed: one heavy sweep over a low part, tight
+	-- squared temples. Reads as "kept", not just "short".
 	SidePart = {
-		{ name = "HairCrown", size = V(0.84, 0.22, 0.84), at = CF(0, 0.36, 0.03) },
-		{ name = "HairSweep", size = V(0.52, 0.20, 0.28), at = CF(-0.13, 0.38, -0.27) * A(0, 0, math.rad(-12)) },
-		{ name = "HairPartSide", size = V(0.22, 0.15, 0.30), at = CF(0.32, 0.33, -0.19) },
-		{ name = "HairBack", size = V(0.74, 0.22, 0.15), at = CF(0, 0.22, 0.40) },
-		{ name = "HairTempleLeft", size = V(0.07, 0.20, 0.56), at = CF(-0.395, 0.22, 0.06) },
-		{ name = "HairTempleRight", size = V(0.07, 0.20, 0.56), at = CF(0.395, 0.22, 0.06) },
+		{ name = "HairCrown", size = V(1.36, 0.34, 1.34), at = CF(0, 0.64, 0.03) },
+		{ name = "HairSweep", size = V(0.96, 0.36, 0.56), at = CF(-0.18, 0.74, -0.4) * A(0, 0, math.rad(-12)), tall = true },
+		{ name = "HairPartSide", size = V(0.38, 0.26, 0.56), at = CF(0.46, 0.62, -0.3) },
+		{ name = "HairBack", size = V(1.3, 0.46, 0.24), at = CF(0, 0.34, 0.66) },
+		{ name = "HairTempleLeft", size = V(0.12, 0.42, 0.96), at = CF(-0.66, 0.36, 0.08) },
+		{ name = "HairTempleRight", size = V(0.12, 0.42, 0.96), at = CF(0.66, 0.36, 0.08) },
 	},
-	-- Hale. Almost no volume: a short crown, a slightly raised front, and hair
-	-- that sits LOW on the sides. Two pieces would have read as a swim cap;
-	-- the low side strips are what make it military.
+	-- Hale. A hard, square military cut: a flat top, a squared front edge and
+	-- hair held tight and LOW on the sides. Compact, and the smallest head
+	-- volume of the three leads by design.
 	CrewCut = {
-		{ name = "HairCrown", size = V(0.84, 0.18, 0.84), at = CF(0, 0.37, 0.02) },
-		{ name = "HairFront", size = V(0.72, 0.13, 0.17), at = CF(0, 0.40, -0.33) },
-		{ name = "HairSideLeft", size = V(0.07, 0.26, 0.66), at = CF(-0.395, 0.16, 0.05) },
-		{ name = "HairSideRight", size = V(0.07, 0.26, 0.66), at = CF(0.395, 0.16, 0.05) },
-		{ name = "HairNape", size = V(0.70, 0.20, 0.09), at = CF(0, 0.14, 0.40) },
+		{ name = "HairCrown", size = V(1.34, 0.26, 1.34), at = CF(0, 0.68, 0.02) },
+		{ name = "HairFront", size = V(1.16, 0.24, 0.32), at = CF(0, 0.72, -0.5) },
+		{ name = "HairSideLeft", size = V(0.1, 0.44, 1.04), at = CF(-0.66, 0.3, 0.06) },
+		{ name = "HairSideRight", size = V(0.1, 0.44, 1.04), at = CF(0.66, 0.3, 0.06) },
+		{ name = "HairNape", size = V(1.18, 0.32, 0.12), at = CF(0, 0.24, 0.66) },
 	},
-	-- Tall on top, shaved at the temples. The strongest vertical of the set,
-	-- so it is the one background silhouette that is unmistakable in a crowd.
+	-- Tall on top, shaved at the temples, with a forward quiff. The strongest
+	-- vertical of the set - the one background silhouette unmistakable in a
+	-- crowd.
 	Undercut = {
-		{ name = "HairTop", size = V(0.72, 0.36, 0.78), at = CF(0, 0.41, 0.04) },
-		{ name = "HairShaveLeft", size = V(0.06, 0.24, 0.62), at = CF(-0.40, 0.19, 0.05) },
-		{ name = "HairShaveRight", size = V(0.06, 0.24, 0.62), at = CF(0.40, 0.19, 0.05) },
-		{ name = "HairBack", size = V(0.62, 0.17, 0.13), at = CF(0, 0.28, 0.40) },
+		{ name = "HairTop", size = V(1.12, 0.52, 1.2), at = CF(0, 0.8, 0.06), tall = true },
+		{ name = "HairQuiff", size = V(0.94, 0.36, 0.44), at = CF(0, 0.98, -0.38) * A(math.rad(18), 0, 0), tall = true },
+		{ name = "HairShaveLeft", size = V(0.08, 0.38, 1.04), at = CF(-0.65, 0.34, 0.06) },
+		{ name = "HairShaveRight", size = V(0.08, 0.38, 1.04), at = CF(0.65, 0.34, 0.06) },
+		{ name = "HairBack", size = V(1.02, 0.3, 0.2), at = CF(0, 0.48, 0.66) },
 	},
-	-- Deliberately off-axis: the two tufts are rotated against each other so
-	-- the outline is lopsided from every angle.
+	-- Deliberately off-axis: two big tufts rotated against each other, so the
+	-- outline is lopsided from every angle.
 	MessyCrop = {
-		{ name = "HairCrown", size = V(0.84, 0.24, 0.82), at = CF(0, 0.35, 0.02) },
-		{ name = "HairTuftLeft", size = V(0.34, 0.18, 0.30), at = CF(-0.18, 0.44, -0.09) * A(0, 0, math.rad(11)) },
-		{ name = "HairTuftRight", size = V(0.30, 0.16, 0.28), at = CF(0.20, 0.43, 0.11) * A(0, 0, math.rad(-15)) },
-		{ name = "HairFringe", size = V(0.52, 0.16, 0.13), at = CF(0.04, 0.33, -0.39) * A(0, 0, math.rad(6)) },
-		{ name = "HairBack", size = V(0.70, 0.24, 0.15), at = CF(0, 0.20, 0.40) },
+		{ name = "HairCrown", size = V(1.38, 0.38, 1.34), at = CF(0, 0.62, 0.03) },
+		{ name = "HairTuftLeft", size = V(0.6, 0.32, 0.54), at = CF(-0.3, 0.86, -0.14) * A(0, 0, math.rad(11)), tall = true },
+		{ name = "HairTuftRight", size = V(0.54, 0.3, 0.5), at = CF(0.32, 0.84, 0.2) * A(0, 0, math.rad(-15)), tall = true },
+		{ name = "HairFringe", size = V(0.88, 0.26, 0.24), at = CF(0.06, 0.52, -0.65) * A(0, 0, math.rad(6)) },
+		{ name = "HairBack", size = V(1.2, 0.5, 0.26), at = CF(0, 0.34, 0.66) },
 	},
-	-- FIVE rounded pieces, not fifty. The environment pass had just finished
-	-- deleting a snowfield made of overlapping spheres; a head is not the
-	-- place to reintroduce that. A flat base carries the hairline and four
-	-- controlled puffs carry the volume.
+	-- Five big rounded puffs, not fifty little ones: a flat base carries the
+	-- hairline and four controlled curls carry the volume.
 	CurlyTop = {
-		{ name = "HairBase", size = V(0.86, 0.26, 0.86), at = CF(0, 0.34, 0.03) },
-		{ name = "HairCurlLeft", size = V(0.44, 0.40, 0.44), at = CF(-0.23, 0.46, -0.05), kind = "ball" },
-		{ name = "HairCurlRight", size = V(0.42, 0.38, 0.42), at = CF(0.24, 0.47, 0.05), kind = "ball" },
-		{ name = "HairCurlBack", size = V(0.40, 0.36, 0.40), at = CF(0, 0.47, 0.25), kind = "ball" },
-		{ name = "HairCurlFront", size = V(0.36, 0.32, 0.36), at = CF(0, 0.44, -0.25), kind = "ball" },
+		{ name = "HairBase", size = V(1.4, 0.42, 1.4), at = CF(0, 0.6, 0.04) },
+		{ name = "HairCurlLeft", size = V(0.74, 0.66, 0.74), at = CF(-0.36, 0.84, -0.08), kind = "ball", tall = true },
+		{ name = "HairCurlRight", size = V(0.7, 0.64, 0.7), at = CF(0.38, 0.86, 0.08), kind = "ball", tall = true },
+		{ name = "HairCurlBack", size = V(0.68, 0.6, 0.68), at = CF(0, 0.86, 0.4), kind = "ball", tall = true },
+		{ name = "HairCurlFront", size = V(0.62, 0.54, 0.62), at = CF(0, 0.8, -0.4), kind = "ball", tall = true },
 	},
-	-- Smooth over the crown, gathered at the nape, with a short tail. Medium
-	-- length worn UP, so it is a different outline to the bob without being
+	-- Smooth over the crown, gathered at the nape into a short thick tail.
+	-- Medium length worn UP: a different outline to the bob without being
 	-- "the long-haired one".
 	TiedBack = {
-		{ name = "HairCrown", size = V(0.86, 0.24, 0.84), at = CF(0, 0.35, 0.03) },
-		{ name = "HairSideLeft", size = V(0.12, 0.30, 0.60), at = CF(-0.40, 0.21, 0.06) },
-		{ name = "HairSideRight", size = V(0.12, 0.30, 0.60), at = CF(0.40, 0.21, 0.06) },
-		{ name = "HairBand", size = V(0.26, 0.18, 0.20), at = CF(0, 0.12, 0.42) },
-		{ name = "HairTail", size = V(0.24, 0.46, 0.22), at = CF(0, -0.10, 0.46) * A(math.rad(-8), 0, 0) },
+		{ name = "HairCrown", size = V(1.4, 0.4, 1.38), at = CF(0, 0.62, 0.04) },
+		{ name = "HairSideLeft", size = V(0.18, 0.52, 1.02), at = CF(-0.68, 0.36, 0.1) },
+		{ name = "HairSideRight", size = V(0.18, 0.52, 1.02), at = CF(0.68, 0.36, 0.1) },
+		{ name = "HairBand", size = V(0.44, 0.3, 0.34), at = CF(0, 0.22, 0.72), color = Color3.fromRGB(132, 66, 62) },
+		{ name = "HairTail", size = V(0.42, 0.84, 0.36), at = CF(0, -0.22, 0.8) * A(math.rad(-8), 0, 0) },
 	},
 	Bald = {},
 }
 
 --------------------------------------------------------------------------------
--- HEADWEAR, worn OVER hair rather than instead of it.
---
--- Helmeted characters below are always given a tight hair style, so what
--- shows under the shell is a hairline at the temples rather than a block
--- fighting its way out through the crown.
+-- HEADWEAR, worn OVER hair rather than instead of it. Big, rounded-off shells
+-- that change the head outline completely - on a worker or a guard the
+-- headwear IS the silhouette, and the hair only shows at the sides and nape.
 --------------------------------------------------------------------------------
 
 local HEADWEAR: { [string]: { HairPiece } } = {
 	Helmet = {
-		{ name = "HelmetShell", size = V(0.94, 0.46, 0.92), at = CF(0, 0.31, 0.02) },
-		{ name = "HelmetBrim", size = V(0.96, 0.09, 0.26), at = CF(0, 0.15, -0.35) },
-		{ name = "HelmetNape", size = V(0.88, 0.22, 0.15), at = CF(0, 0.05, 0.40) },
+		{ name = "HelmetShell", size = V(1.54, 0.74, 1.52), at = CF(0, 0.56, 0.03) },
+		{ name = "HelmetBrim", size = V(1.56, 0.14, 0.4), at = CF(0, 0.3, -0.58) },
+		{ name = "HelmetNape", size = V(1.46, 0.4, 0.26), at = CF(0, 0.12, 0.68) },
+		{ name = "HelmetRail", size = V(0.16, 0.3, 1.2), at = CF(0.78, 0.5, 0.04) },
+		{ name = "HelmetMount", size = V(0.4, 0.26, 0.2), at = CF(0, 0.66, -0.78) },
 	},
 	HardHat = {
-		{ name = "HardHatShell", size = V(0.92, 0.40, 0.90), at = CF(0, 0.33, 0.02) },
-		{ name = "HardHatCrest", size = V(0.16, 0.14, 0.86), at = CF(0, 0.52, 0.02) },
-		{ name = "HardHatBrim", size = V(0.94, 0.08, 0.30), at = CF(0, 0.17, -0.38) },
+		{ name = "HardHatShell", size = V(1.5, 0.62, 1.48), at = CF(0, 0.6, 0.03) },
+		{ name = "HardHatCrest", size = V(0.28, 0.24, 1.42), at = CF(0, 0.94, 0.03) },
+		{ name = "HardHatBrim", size = V(1.6, 0.12, 0.52), at = CF(0, 0.38, -0.62) },
+		{ name = "HardHatBrimBack", size = V(1.56, 0.1, 0.22), at = CF(0, 0.36, 0.78) },
 	},
 	Hood = {
-		{ name = "HoodShell", size = V(0.98, 0.50, 0.94), at = CF(0, 0.28, 0.07) },
-		{ name = "HoodRim", size = V(0.94, 0.16, 0.14), at = CF(0, 0.36, -0.38) },
-		{ name = "HoodDrapeLeft", size = V(0.14, 0.42, 0.50), at = CF(-0.44, 0.08, 0.10) },
-		{ name = "HoodDrapeRight", size = V(0.14, 0.42, 0.50), at = CF(0.44, 0.08, 0.10) },
+		{ name = "HoodShell", size = V(1.6, 0.84, 1.52), at = CF(0, 0.52, 0.1) },
+		{ name = "HoodRim", size = V(1.56, 0.3, 0.28), at = CF(0, 0.62, -0.62), color = Color3.fromRGB(150, 136, 116) },
+		{ name = "HoodDrapeLeft", size = V(0.26, 0.78, 0.86), at = CF(-0.74, 0.1, 0.14) },
+		{ name = "HoodDrapeRight", size = V(0.26, 0.78, 0.86), at = CF(0.74, 0.1, 0.14) },
 	},
 }
 
 --------------------------------------------------------------------------------
 -- FACES
 --
--- Four presets, all within a few hundredths of a stud of each other. This is
--- deliberately conservative: the brief is a stylized Roblox face, and the
--- distance between "these two people are different" and "this person is a
--- caricature" is very small at this scale. Identity is carried by hair,
--- clothing and silhouette; the face only has to stop being literally
--- identical on twenty-four heads.
+-- The default-avatar language: solid dark eyes with one glint, a bar for each
+-- brow, a bar for a mouth. Faces are told apart by eye SIZE and spacing, brow
+-- weight and angle, and mouth width - never by sculpted anatomy.
 --------------------------------------------------------------------------------
 
 local FACES: { [string]: FaceMetrics } = {
 	Neutral = {
-		eyeWidth = 0.16, eyeHeight = 0.14, eyeSpacing = 0.16,
-		browWidth = 0.18, browThickness = 0.04, browHeight = 0.19, browTilt = 0,
-		mouthWidth = 0.20,
+		eyeWidth = 0.2, eyeHeight = 0.24, eyeSpacing = 0.24, eyeY = 0.04,
+		browWidth = 0.28, browThickness = 0.07, browHeight = 0.29, browTilt = 0,
+		mouthWidth = 0.3, mouthY = -0.26,
 	},
+	-- Lyra: the biggest, roundest eyes and a light brow.
 	Soft = {
-		eyeWidth = 0.17, eyeHeight = 0.155, eyeSpacing = 0.155,
-		browWidth = 0.17, browThickness = 0.035, browHeight = 0.205, browTilt = 0.05,
-		mouthWidth = 0.19,
+		eyeWidth = 0.22, eyeHeight = 0.28, eyeSpacing = 0.235, eyeY = 0.04,
+		browWidth = 0.26, browThickness = 0.06, browHeight = 0.32, browTilt = 0.06,
+		mouthWidth = 0.26, mouthY = -0.25,
 	},
+	-- Voss: narrow, wide-set, level eyes and a sharp angled brow.
 	Sharp = {
-		eyeWidth = 0.155, eyeHeight = 0.115, eyeSpacing = 0.168,
-		browWidth = 0.195, browThickness = 0.038, browHeight = 0.178, browTilt = -0.06,
-		mouthWidth = 0.19,
+		eyeWidth = 0.24, eyeHeight = 0.15, eyeSpacing = 0.26, eyeY = 0.05,
+		browWidth = 0.32, browThickness = 0.065, browHeight = 0.26, browTilt = -0.08,
+		mouthWidth = 0.24, mouthY = -0.26,
 	},
+	-- Hale: small eyes under a heavy, low, straight brow, and a wide mouth.
 	Mature = {
-		eyeWidth = 0.145, eyeHeight = 0.105, eyeSpacing = 0.172,
-		browWidth = 0.215, browThickness = 0.055, browHeight = 0.172, browTilt = -0.025,
-		mouthWidth = 0.22,
+		eyeWidth = 0.19, eyeHeight = 0.14, eyeSpacing = 0.27, eyeY = 0.03,
+		browWidth = 0.36, browThickness = 0.1, browHeight = 0.23, browTilt = -0.03,
+		mouthWidth = 0.36, mouthY = -0.27,
 	},
 }
 
@@ -440,7 +456,7 @@ local LEADS: { [string]: Profile } = {
 		-- No scanner, no expedition pack. He used to carry the identical
 		-- scientist kit, which is most of why the senior officer read as a
 		-- third researcher.
-		equipment = { "ShoulderYoke", "RankMarker", "HeavyBelt", "SlungRifle" },
+		equipment = { "ShoulderYoke", "RankMarker", "HeavyBelt", "Headset", "SlungRifle" },
 	},
 }
 
@@ -469,14 +485,14 @@ local SCIENTISTS: { Profile } = {
 	{
 		hairStyle = "LayeredBob", hairColor = HAIR.darkBrown, faceStyle = "Soft",
 		bodyStyle = "Light", outfitStyle = "Researcher",
-		skin = SKIN.fair, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.orange,
-		scale = 0.96, equipment = { "Tablet" },
+		skin = SKIN.fair, coat = CLOTH.labcoat, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 0.96, eyewear = "GogglesUp", equipment = { "Clipboard" },
 	},
 	{
 		hairStyle = "SidePart", hairColor = HAIR.black, faceStyle = "Sharp",
 		bodyStyle = "Average", outfitStyle = "Analyst",
 		skin = SKIN.brown, coat = CLOTH.ice, pants = CLOTH.dark, trim = CLOTH.ivory,
-		scale = 1.02, eyewear = "Glasses", equipment = { "HipPouch" },
+		scale = 1.02, eyewear = "Glasses", equipment = { "Tablet" },
 	},
 	{
 		hairStyle = "CurlyTop", hairColor = HAIR.black, faceStyle = "Neutral",
@@ -487,7 +503,7 @@ local SCIENTISTS: { Profile } = {
 	{
 		hairStyle = "TiedBack", hairColor = HAIR.brown, faceStyle = "Soft",
 		bodyStyle = "Average", outfitStyle = "Researcher",
-		skin = SKIN.tan, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.ivory,
+		skin = SKIN.tan, coat = CLOTH.labcoat, pants = CLOTH.dark, trim = CLOTH.ivory,
 		scale = 0.99, equipment = {},
 	},
 	{
@@ -506,13 +522,13 @@ local SCIENTISTS: { Profile } = {
 		hairStyle = "Undercut", hairColor = HAIR.ash, faceStyle = "Mature",
 		bodyStyle = "Average", outfitStyle = "Technician",
 		skin = SKIN.rich, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.orange,
-		scale = 1.01, equipment = { "Radio" },
+		scale = 1.01, eyewear = "Goggles", equipment = { "Radio" },
 	},
 	{
 		hairStyle = "CrewCut", hairColor = HAIR.lightBrown, faceStyle = "Neutral",
 		bodyStyle = "Broad", outfitStyle = "Researcher",
-		skin = SKIN.warm, coat = CLOTH.field, pants = CLOTH.dark, trim = CLOTH.orange,
-		scale = 1.05, equipment = {},
+		skin = SKIN.warm, coat = CLOTH.labcoat, pants = CLOTH.dark, trim = CLOTH.orange,
+		scale = 1.05, eyewear = "GogglesUp", equipment = { "SmallPack" },
 	},
 }
 
@@ -622,7 +638,7 @@ local WORKERS: { Profile } = {
 		bodyStyle = "Compact", outfitStyle = "FieldWorker",
 		skin = SKIN.olive, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.hiVis,
 		scale = 0.95, headwear = "Hood",
-		equipment = { "Vest", "ToolBelt", "CableCoil" },
+		equipment = { "Vest", "ToolBelt", "CableCoil", "WorkPack" },
 	},
 	{
 		hairStyle = "CrewCut", hairColor = HAIR.sandy, faceStyle = "Sharp",
@@ -636,7 +652,7 @@ local WORKERS: { Profile } = {
 		bodyStyle = "Light", outfitStyle = "FieldWorker",
 		skin = SKIN.brown, coat = CLOTH.slate, pants = CLOTH.dark, trim = CLOTH.hiVis,
 		scale = 0.96, headwear = "HardHat",
-		equipment = { "Vest", "ToolBelt", "ToolCase" },
+		equipment = { "Vest", "ToolBelt", "WorkPack", "ToolCase" },
 	},
 }
 

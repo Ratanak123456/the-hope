@@ -1770,6 +1770,83 @@ failures; check.sh clean.
 **Not re-watched after the last edit:** the 07j fix moving the far-rim worker out
 of frame (from straight above he read as lying down) is verified offline only.
 
+## 2026-09-23 session (continued): the cast as Roblox avatars, IN STUDIO
+
+Scope: the VISUAL look of every human in the opening, nothing else. Started
+from HEAD `4c31411`, with a previous session's uncommitted edits for this same
+pass already in the tree (Cast.lua body/accessories, CharacterAppearance.lua
+hair/faces/profiles, the lineup benchmark dummy). This session audited that
+work, finished it, and checked it in Studio.
+
+**Unchanged by design:** Motor6D names and hierarchy, joint HEIGHTS and limb
+LENGTHS (sole drop still 2.81 at scale 1, the 0.31 Root offset intact),
+JOINT_LIMITS, `Cast.place`/`walk`/`stepAnimate`, grounding, look-at, the
+upright validator, PerformanceDirector.
+
+**Body (`Cast.lua`, `HEAD_SIZE` and the constants beside it):** block head
+1.3 x 1.25 x 1.25, up from 0.8, which puts it at the classic-avatar ratio to
+the torso. Torso 2.2 wide (x torso style). The lower torso hangs 0.2 below its
+joint and covers the top of the thighs like a belt line, with the waist and hip
+offsets moved by the same 0.2 so no pivot moves in world space. Arms and legs
+are ONE width top to bottom, hands and feet included. Shoulder and hip spacing
+now come from the torso width, so arms sit flush outside it. Every accessory
+offset is written against the named torso/head dimensions (`p.uh/ud/lh/ld/lt/fz`,
+`HEAD_FRONT`) rather than literals. The face is flat and graphic: solid dark
+eyes with one glint, bar brows, and a bar mouth that the existing expression
+code animates.
+
+**Appearance (`CharacterAppearance.lua`):** every hairstyle rebuilt as two to
+seven chunky masses wider than the skull. `tall` pieces are hidden under
+headwear so they can't punch through a helmet. Lyra's bob gained jaw-height
+flare blocks, the one change that separated her head from Voss's in flat
+silhouette. Headwear shells are bigger. Eyewear is sized to read at medium
+distance: Voss wears heavy dark frames, Lyra a single temple lens with an ear
+pod, and goggles come down or pushed up. The outfit families are each an
+OUTLINE: field parka (Lyra), lab coat with lapels and skirt, analyst long coat,
+commander greatcoat, technician jacket, worker coveralls, security armour.
+Coat skirts hang from the upper legs so they swing with the walk. Equipment is
+larger and more varied: Lyra's scanner is now an orange pistol-grip
+instrument with an antenna, deliberately unlike Voss's flat tablet. Other
+items are a clipboard, a work pack, a headset for Hale, and rifles with
+magazines.
+
+**Studio found one regression the offline tools did not.** The over-the-
+shoulder reverse (`human()`, `shot="Over"`) was tuned for the 0.8 head. With
+the new head and bob, Lyra's hair covered half of 06a/06c/06f/07f2. Moving the
+lens further back does NOT fix this: the listener sits at `lateral*D/(back+D)`
+off the lens axis, so a longer throw pulls them toward frame centre (tried; it
+also backed the lens into a technician). The fix scales the LATERAL offset by
+`Cast.HeadSize` and raises the lens (`OTS_BACK/ACROSS/LIFT`). Confirmed in a
+second Studio run. Separately, the two command-room masters picked up a 16-degree
+mid-shot orbit, most likely the bigger heads grazing the sightline to the leads'
+centroid. `master()` now declares the three leads as `foreground`. That fix is
+verified OFFLINE ONLY: the user had limited screen time and it was not re-watched.
+
+**Tooling:** `tools/scenecheck/dump.luau` now captures every over-the-shoulder
+shot (06a, 06f, 07f2, 09c2, 11j, 12a). The lineup has a six-block classic
+dummy for comparison and a wider `GAP`.
+
+**Verification:** `./tools/check.sh` clean; castcheck 50,298 / 0 failures
+(closest lens-to-person now 2.79 studs, was 1.80); phase0a all pass. Studio:
+two Play runs through 06-07g, 0 `[ActorValidation]` warnings, and 06a/06c/06f/
+07f2 play `corrected:false`. Frames and lineup are in
+`docs/visual-rebuild/2026-09-23-roblox-cast/`.
+
+**Found and NOT fixed (outside this pass):** 11j_HaleBelowWhat and 12a_HaleWake
+frame Hale tiny behind a chamber pillar with either old or new OTS numbers, so
+it's chamber staging, not head size. Voss's face blows out near white under the
+exterior key in 07e2 (lighting). Pre-existing mid-shot orbits in 07a, 09a2 and
+11k-12n (also present in a log from before this pass).
+
+**Driving Studio, learned this session:** `vinegar --help` opens Vinegar's GUI
+and hangs rather than printing help. Launch with
+`GDK_BACKEND=x11 DISPLAY=:1 vinegar <place>.rbxlx`. Build the review place from
+a SCRATCH copy of `src` with `Config.Cinematic.Debug` edited there, so the repo
+config is never touched. Never `pkill -f` a pattern that also appears in the
+same shell command: it kills that shell (exit 144). The user moves between
+workspaces while Studio runs; the capture guard refused correctly twice, so ask
+again rather than pulling focus back.
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
