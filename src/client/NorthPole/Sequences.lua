@@ -90,10 +90,12 @@ local STAGING={
   {at=V(-0.5,3.35,-22),look=V(0,10,-36),job="CheckingTablet"},
   {at=V(5,3.5,-21),look=V(0,10,-36),job="Authority"},
  }},
+ -- Eyelines on the machine's chest: Aegis Zero kneels at the seal's rim,
+ -- 36 studs back, not over the middle of it.
  Chamber={origin="ChamberFloor",marks={
-  {at=V(-5,2.8,24),look=V(0,14,0),job="Idle"},
-  {at=V(-1,2.95,27),look=V(0,14,0),job="Idle"},
-  {at=V(5,3.1,25),look=V(0,14,0),job="Authority"},
+  {at=V(-5,2.8,24),look=V(0,26,-30),job="Idle"},
+  {at=V(-1,2.95,27),look=V(0,26,-30),job="Idle"},
+  {at=V(5,3.1,25),look=V(0,26,-30),job="Authority"},
  }},
 }
 
@@ -160,7 +162,30 @@ function Sequences.buildCast(env): CastState
   local spot=BORE_CREW[i]
   table.insert(c.workers,Cast.buildWorker(env.folder,CFrame.lookAt(Z.BaseCenter+spot.at,Z.BaseCenter+V(spot.look.X,spot.at.Y,spot.look.Z)),i))
  end
- c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,15,-8))*A(0,math.pi,0),10)
+ --[[
+  AEGIS ZERO, kneeling at the rim of the seal and facing the room. The
+  height is not authored: AegisCinematic solves the kneel and grounds the
+  lowest contact on the chamber floor. The distance back IS authored, from
+  the set: the planted forward foot has to clear both the iris (whose leaves
+  slide fifteen studs outward in 13a) and the raised seal race ring at 17.5,
+  and at 36 back its nearest corner is at radius 19. The chains run forward
+  from the fists and are made fast to two of the iris leaves themselves, so
+  when the seal opens it drags them taut before they break.
+ ]]
+ local function leafNearest(point)
+  local best,bestDistance=nil,math.huge
+  for _,leaf in env.sealLeaves do
+   local d=(leaf.part.Position-point).Magnitude
+   if d<bestDistance then best,bestDistance=leaf.part,d end
+  end
+  return best
+ end
+ local chainAnchors={Z.ChamberFloor+V(9.5,0.85,-6.5),Z.ChamberFloor+V(-9.5,0.85,-6.5)}
+ c.aegis=Cast.buildAegisZero(env.folder,CF(Z.ChamberFloor+V(0,0,-36))*A(0,math.pi,0),10,{
+  floorY=Z.ChamberFloor.Y,
+  anchors=chainAnchors,
+  anchorHosts={leafNearest(chainAnchors[1]),leafNearest(chainAnchors[2])},
+ })
  --[[
   THE CHEST BAND.
 
@@ -171,12 +196,13 @@ function Sequences.buildCast(env): CastState
   that the door and the thing behind it are one system. Nobody has to say it.
 
   Fixed to the torso through Cast.fix rather than left standing in world
-  space: setAegisRise pitches the waist about seventeen degrees, which on a
-  seventeen-stud torso would leave the band hanging in the air where the
-  chest used to be.
+  space: setAegisRise pitches the waist about twenty degrees, which would
+  leave the band hanging in the air where the chest used to be. It sits on
+  the machine's own band plate across the top of the chest, above the core.
  ]]
+ local band=c.aegis.chestBand
  c.aegisGlyphs=Glyph.band(c.aegis.model,Glyph.Phrases.SealAuthority,
-  c.aegis.torso.CFrame*CF(0,-3.6,-5.1)*A(0,math.pi,0),1.15,3.3,Env.Colors.bronzeDark)
+  c.aegis.torso.CFrame*band.offset*A(0,math.pi,0),band.scale,band.spacing,Env.Colors.bronzeDark)
  for _,item in c.aegisGlyphs.model:GetDescendants() do
   if item:IsA("BasePart") then Cast.fix(c.aegis,c.aegis.torso,item) end
  end
@@ -930,16 +956,24 @@ function Sequences.build(env,c,ui): {Shot}
   believing it may be the source of the signal; nothing in these four shots
   tells them otherwise, and nothing tells the audience either.
  ]]
- -- The focus is lifted clear of the floor. Aegis Zero's foot sits with its
- -- centre at chamber-floor level and some of its toe geometry below it (a
- -- long-standing defect in the Guardian rig, tracked separately), so aiming
- -- at the part's own centre puts the focal point inside the floor.
- add("10a_AegisFoot",3.4,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(10,3,14),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
+ -- The planted forward foot: a sole on the floor, a light toe cap, a heel,
+ -- and the shin rising out of it. The focus is lifted to the top of the foot
+ -- so the shot looks along it rather than down at the floor. Taken from
+ -- outside the chain: the old front-on offset put the lens on the left
+ -- chain's run from fist to seal.
+ add("10a_AegisFoot",3.4,function() return c.aegis.model:FindFirstChild("LeftFoot") end,V(17,2,4),{stage="Chamber",cue="Music.ScientificDiscovery",pace="Slow",focusOffset=V(0,2.5,0)})
  add("10b_AegisChains",3.8,function() return c.aegis.model:FindFirstChild("RightHand") end,V(12,3,17),{fov=58,focusOffset=V(0,-3,0),cue="Machinery.ChainTension",pace="Slow"})
  -- The chest, and the band of marks across it - which the audience has now
  -- seen four times and cannot yet read.
  add("10c_AegisTorso",3.4,function() return c.aegis.core end,V(15,6,26),{fov=52,focusOffset=V(0,-2,0),pace="Slow",cue="Aegis.CorePulse"})
- add("10d_AegisFullReveal",4.8,function() return c.aegis.torso end,V(50,10,84),{fov=57,to=V(57,14,94),focusOffset=V(0,-4,0),pace="Slow"})
+ -- From just behind the expedition, on the line from the machine through
+ -- them, a few degrees off its left front: the three leads stand in the lower
+ -- left of frame for scale with the kneeling machine filling the middle. The
+ -- focus is a fixed point at chest height over the machine's knee rather than
+ -- a part, so the framing does not wander with the pose. The planted foot and raised
+ -- knee read as a kneel from here, and the chest does not flatten onto the
+ -- waist the way it does head-on.
+ add("10d_AegisFullReveal",4.8,function() return Z.ChamberFloor+V(0,18,-36) end,V(8,-10,84),{fov=57,to=V(10,-9,90),pace="Slow",foreground={c.aegis.model}})
 
  --[[
   ============================================================================
@@ -1147,7 +1181,7 @@ function Sequences.build(env,c,ui): {Shot}
   Cast.place(c.lyra,core+V(0,-2.2,3),core)
  end})
  human("31f_ProtectTogether",2.8,N.Lyra,"Let us protect it together.","Core","Determined","LyraTogether",{light="Emergency",action="Brace"})
- add("32_FinalStruggle",3,function() return c.aegis.torso end,V(58,16,88),{light="Emergency",fov=65,handheld=true,cue="Aegis.MechanicalCry",enter=function()
+ add("32_FinalStruggle",3,function() return c.aegis.torso end,V(40,10,62),{light="Emergency",fov=65,handheld=true,cue="Aegis.MechanicalCry",enter=function()
   c.sovereign.root.CFrame=CF(Z.ChamberFloor+V(0,-15,18));Cast.evaluate(c.sovereign)
  end,update=function(a)
   Cast.setAegisRise(c.aegis,1-a);Cast.setCreatureLimbUnfold(c.sovereign,1-a*0.7);Cast.act(c.lyra,"Brace","Determined",c.aegis.core.Position)

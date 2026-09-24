@@ -7,6 +7,7 @@ local Config=require(game:GetService("ReplicatedStorage").Shared.Config)
 local RunService=game:GetService("RunService")
 local C=require(script.Parent.Env).Colors
 local Appearance=require(script.Parent.CharacterAppearance)
+local AegisCinematic=require(script.Parent.AegisCinematic)
 local V,CF,A=Vector3.new,CFrame.new,CFrame.Angles
 local Cast={}
 -- Every rig ever built, so ground raycasts can exclude the whole cast at
@@ -285,8 +286,8 @@ end
 
  Same mechanism `attach` uses internally, exposed because Aegis Zero's chest
  band is authored by GlyphLanguage rather than by the rig builder and still
- has to ride the torso: `setAegisRise` pitches the waist by about seventeen
- degrees, which on a seventeen-stud torso moves the chest several studs, and
+ has to ride the torso: `setAegisRise` pitches the waist by about twenty
+ degrees, which moves the chest several studs, and
  a band of marks left hanging in the air where the chest used to be is worse
  than no band at all.
 
@@ -1223,126 +1224,20 @@ function Cast.stepAnimate(r,now)
  end
  r.face.mouth.Size=V(r.face.mouthWidth,fear and 0.15 or phase=="Speak" and 0.05+math.abs(math.sin(now*9))*0.07 or 0.05,0.03)*r.scale
 end
--- Mechanical guardian: 62 studs standing, 38 kneeling. Individual limbs,
--- fingers, neck pistons, core rotor, armor flakes and conduit plates.
-function Cast.buildAegisZero(parent,cf,scale): AegisHandle
- local r=rig(parent,"AegisZeroSealed",cf);r.scale=scale or 10;r.dummy=r.model;r.chains={};r.chainData={};r.fingers={};r.ice={}
- local pelvis=joint(r,r.root,"Pelvis","Root",V(12,6,8),CF(),CF(),C.metal,"wedge")
- r.torso=joint(r,pelvis,"UpperTorso","Waist",V(17,17,9),CF(0,3,0),CF(0,-7,0),C.metal,"wedge")
- r.head=joint(r,r.torso,"Head","Neck",V(7,8,6),CF(0,9,0),CF(0,-3,0),C.metal,"wedge")
- r.core=attach(r,r.torso,"ChestCore",V(5,5,1.2),CF(0,1,-5),C.orange,"ball",Enum.Material.Neon)
- r.coreLight=Kit.light(r.core,C.warm,45,1)
- r.rotor=joint(r,r.torso,"CoreRotor","CoreRotor",V(5.6,0.5,1.3),CF(0,1,-5.2),CF(),C.gold)
- for _,side in {-1,1} do
-  local prefix=side<0 and "Left" or "Right"
-  local arm=joint(r,r.torso,prefix.."UpperArm",prefix.."Shoulder",V(7,11,7),CF(side*11,6,0),CF(0,4,0),C.metal,"wedge")
-  local fore=joint(r,arm,prefix.."LowerArm",prefix.."Elbow",V(6,10,6),CF(0,-6,0),CF(0,4,0),C.metal,"wedge")
-  local hand=joint(r,fore,prefix.."Hand",prefix.."Wrist",V(5,4,3.5),CF(0,-6,0),CF(0,1.5,0),C.metal)
-  for f=1,4 do
-   local finger=joint(r,hand,prefix.."Finger"..f,prefix.."Finger"..f,V(0.8,3,1),CF(-2.3+f, -1.5,-0.7),CF(0,1.2,0),C.ivory)
-   attach(r,finger,"Knuckle",V(1,0.8,1.1),CF(0,0.8,0),C.gold,"ball")
-   table.insert(r.fingers,prefix.."Finger"..f)
-  end
-  local thigh=joint(r,pelvis,prefix.."Thigh",prefix.."Hip",V(7,12,8),CF(side*5,-2,0),CF(0,5,0),C.metal,"wedge")
-  local shin=joint(r,thigh,prefix.."Shin",prefix.."Knee",V(6.5,12,7),CF(0,-7,0),CF(0,5,0),C.metal,"wedge")
-  local foot=joint(r,shin,prefix.."Foot",prefix.."Ankle",V(7,4,12),CF(0,-7,0),CF(0,1,3),C.metal,"wedge")
-  for _,host in {arm,fore,thigh,shin,r.torso} do
-   local sz=host.Size
-   for layer=1,3 do
-    local armor=attach(r,host,"IvoryArmorPlate",V(sz.X*1.07,sz.Y*0.3,sz.Z*0.28),CF(0,sz.Y*(0.4-layer*0.27),-sz.Z*0.45),C.ivory,"wedge")
-    attach(r,armor,"WeatheredGoldEdge",V(armor.Size.X*0.9,0.15,0.15),CF(0,armor.Size.Y/2,-0.2),C.gold)
-    attach(r,armor,"BattleScore",V(armor.Size.X*0.3,0.05,0.05),CF(-0.5,0,-armor.Size.Z/2-0.03)*A(0,0,0.22),C.metal)
-   end
-   attach(r,host,"Conduit",V(0.24,sz.Y*0.65,0.2),CF(sz.X*0.42,0,-sz.Z*0.54),C.orange,nil,Enum.Material.Neon)
-   attach(r,host,"JointBearing",V(sz.X*0.7,1.4,sz.Z*0.7),CF(0,-sz.Y/2,0),C.gold,"wedge")
-  end
-  attach(r,arm,"BroadPauldron",V(10,4,10),CF(side,5,0),C.ivory,"wedge")
-  local frost=attach(r,arm,"FracturingIce",V(9,2,9),CF(side,7,0),C.ice,"wedge",Enum.Material.Ice)
-  frost.Transparency=0.25;table.insert(r.ice,frost)
-  attach(r,foot,"ToeCap",V(7.5,2,6),CF(0,1,-4),C.ivory,"wedge")
-  local eye=attach(r,r.head,"Eye",V(1.7,0.5,0.3),CF(side*1.6,0.5,-3.2),C.orange,nil,Enum.Material.Neon)
-  table.insert(r.eyes,eye)
-  attach(r,r.head,"CheekArmor",V(2,3,1),CF(side*2,-1,-3),side<0 and C.ivory or C.metal,"wedge")
-  attach(r,r.torso,"BackPylon",V(2,18,3),CF(side*5,4,6)*A(-0.3,0,side*0.1),C.ivory,"wedge")
-  attach(r,r.torso,"EmbeddedBlade",V(1,13,2),CF(side*7,10,5)*A(0.4,0,side*0.3),C.gold,"wedge")
- end
- r.poses.Waist=A(math.rad(20),0,0);r.poses.Neck=A(math.rad(-25),0,0)
- for _,p in {"Left","Right"} do
-  r.poses[p.."Hip"]=A(0,0,0)
-  r.poses[p.."Knee"]=A(math.rad(-90),0,0)
-  r.poses[p.."Ankle"]=A(math.rad(90),0,0)
-  r.poses[p.."Shoulder"]=A(math.rad(-18),0,p=="Left" and -0.12 or 0.12)
-  r.poses[p.."Elbow"]=A(math.rad(-24),0,0)
- end
- Cast.evaluate(r)
- for index,prefix in {"Left","Right"} do
-  local hand=r.model:FindFirstChild(prefix.."Hand")
-  local chain=Kit.model(prefix.."RestraintChain",r.model)
-  local links={}
-  for i=1,14 do
-   local link=Kit.model("InterlockingLink",chain)
-   for _,side in {-1,1} do
-    shape(link,"LinkSide",V(0.35,1.8,0.35),CF(side*0.6,0,0),C.gold,"ball",Enum.Material.Metal)
-    shape(link,"LinkEnd",V(1.45,0.35,0.35),CF(0,side*0.8,0),C.gold,"ball",Enum.Material.Metal)
-   end
-   table.insert(links,link)
-  end
-  table.insert(r.chains,chain)
-  table.insert(r.chainData,{hand=hand,links=links,anchor=cf.Position+V(index==1 and -5 or 5,-cf.Position.Y+9500,6),broken=false})
- end
+--[[
+ Aegis Zero lives in AegisCinematic.lua. These wrappers keep Sequences.lua's
+ calls unchanged; the rig is registered with builtRigs so a human's ground
+ ray never lands on the machine's foot.
+]]
+function Cast.buildAegisZero(parent,cf,scale,options): AegisHandle
+ local r=AegisCinematic.build(parent,cf,scale,options)
+ table.insert(builtRigs,r.model)
  return r
 end
-function Cast.updateChains(r,t)
- for _,chain in r.chainData do
-  local from=chain.hand.Position
-  for i,link in chain.links do
-   local a=i/#chain.links
-   local pos=from:Lerp(chain.anchor,a)
-   if chain.broken then
-    local dt=math.min(t-chain.breakTime,1.5)
-    pos+=V(math.sin(i)*dt*6,-dt*dt*12,math.cos(i)*dt*4)
-   end
-   local direction=chain.anchor-from
-   link:PivotTo(CFrame.lookAt(pos,pos+direction)*A(math.pi/2,(i%2)*math.pi/2,0))
-  end
- end
-end
--- Quintic "smootherstep" (Perlin): zero first AND second derivative at both
--- ends, unlike the cubic Kit.smooth curve - that extra flatness at rest is
--- what reads as inertia (a heavy mass reluctant to start, and reluctant to
--- stop) rather than a generic ease. Every Aegis Zero pose driver below
--- reshapes its incoming `amount` through this once, so every call site can
--- keep passing plain linear shot-progress without the mecha ever moving at
--- a robotic constant speed.
-local function heavy(t)
- t=math.clamp(t,0,1)
- return t*t*t*(t*(t*6-15)+10)
-end
-function Cast.setAegisAwaken(r,rawAmount)
- local amount=heavy(rawAmount)
- r.poses.CoreRotor=A(0,0,amount*math.pi*3)
- r.poses.Neck=A(-0.44+amount*0.5,0,0)
- for i,name in r.fingers do r.poses[name]=A(-math.clamp(amount*2-i*0.06,0,1)*1.1,0,0) end
- for _,prefix in {"Left","Right"} do r.poses[prefix.."Wrist"]=A(0,amount*0.16,0) end
- r.core.Color=C.orange:Lerp(C.warm,amount)
- if r.coreLight then r.coreLight.Brightness=1+amount*3 end
- for _,eye in r.eyes do eye.Transparency=1-math.clamp((amount-0.65)/0.35,0,1) end
- for _,ice in r.ice do ice.Transparency=math.clamp(0.25+amount*0.75,0,1) end
- Cast.evaluate(r)
-end
-function Cast.setAegisRise(r,rawAmount)
- local amount=heavy(rawAmount)
- r.poses.Waist=A(0.35-amount*0.3,0,0)
- for _,p in {"Left","Right"} do
-  r.poses[p.."Shoulder"]=A(-0.32+amount*0.3,0,p=="Left" and -0.12 or 0.12)
-  r.poses[p.."Elbow"]=A(-0.42+amount*0.22,0,0)
- end
- Cast.evaluate(r)
-end
-function Cast.breakChain(r,index,time)
- local c=r.chainData[index]
- if c then c.broken=true;c.breakTime=time or 0 end
-end
+function Cast.updateChains(r,t) AegisCinematic.updateChains(r,t) end
+function Cast.setAegisAwaken(r,amount) AegisCinematic.setAwaken(r,amount) end
+function Cast.setAegisRise(r,amount) AegisCinematic.setRise(r,amount) end
+function Cast.breakChain(r,index,time) AegisCinematic.breakChain(r,index,time) end
 -- Anatomy per the visual-director brief: a narrow waist widening into an
 -- armored chest, two reverse-jointed legs (hip and knee bend the SAME
 -- rotational way, so the shin angles backward like a bird's - not a human

@@ -66,6 +66,7 @@ sources=[
  ("ExcavationRig","src/client/NorthPole/ExcavationRig.lua"),
  ("Env","src/client/NorthPole/Env.lua"),
  ("CharacterAppearance","src/client/NorthPole/CharacterAppearance.lua"),
+ ("AegisCinematic","src/client/NorthPole/AegisCinematic.lua"),
  ("Cast","src/client/NorthPole/Cast.lua"),
  ("Lighting","src/client/NorthPole/Lighting.lua"),
  ("PerformanceDirector","src/client/NorthPole/PerformanceDirector.lua"),

@@ -1847,6 +1847,92 @@ same shell command: it kills that shell (exit 144). The user moves between
 workspaces while Studio runs; the capture guard refused correctly twice, so ask
 again rather than pulling focus back.
 
+## 2026-09-23 session (continued): Aegis Zero redesigned for readability
+
+Scope: ONLY the historical giant Aegis in the North Pole opening. Started from
+HEAD `7f5eef5`. The human cast, excavation, lab, key, glyphs, Sovereign,
+Wardens, story, command room and convoy were not touched.
+
+**New: `src/client/NorthPole/AegisCinematic.lua`** (`--!strict`) owns the build,
+the sealed kneel, the standing pose (review only), the damage, frost, chains,
+awakening and rise. `Cast.lua` keeps one-line wrappers (`buildAegisZero`,
+`setAegisAwaken`, `setAegisRise`, `updateChains`, `breakChain`) and registers the
+model in `builtRigs`. The handle keeps the old shape (`model/torso/head/core/
+fingers/chains/chainData/ice/rigid`) so `Cast.fix` still hangs the glyph band.
+It evaluates EXACTLY (no 22% blend like `Cast.evaluate`), because the drivers
+already ease through `heavy` and the floor contact has to be checkable.
+
+**Design.** The old builder hung the same recipe (3 ivory plates, 3 gold edges,
+3 scores, a Neon conduit, a bearing) on every limb and the torso, so no region
+had its own shape. Now every region is a shape first, with at most one primary
+shell, one light accent and one trim, all from `Palette.Aegis` (was `C.ivory/
+gold/orange/metal`). Standing: 60.2 studs, head 8.15 (7.4 heads), shoulders
+28.2 across (3.46 heads). Broad upper chest (18.6) tapering by two wedges to a
+10.4 lower chest, an UNARMOURED dark waist (5 wide spine + two actuators), a
+separate pelvis with a bronze belt and flared hip guards, thin dark gaps at
+every joint. Head: one recessed horizontal visor under a light brow, light
+cheeks, bronze crest; the two `Eye` parts are gone. Core: dark socket, bronze
+ring, rotor, small centre lens - dormant is dark metal, the centre lights first,
+then the rotor and the two short channels under it. Neon budget when awake:
+visor segments, core, 3 channels (castcheck enforces it). Hands: palm, light
+knuckle guard, four two-piece fingers, thumb; the chain's first link sits in
+the curl. Identity matches `AegisRig.lua` piece for piece (left-only bronze
+crest, bronze gauntlet band, light knee/toe caps, etc.); **`AegisRig.lua` did
+not need changes.**
+
+**Damage:** right shoulder shell missing (remnant, torn wedge, hanging rim
+fragment, exposed joint and a light actuator); right cheek sheared, brow
+chipped, visor cracked into a main band and a fragment that lights last;
+three blades in the back at different places, angles and depths; five broad
+frost patches on up-facing surfaces only.
+
+**Sealed pose** is authored as absolute segment angles (joint values derived).
+Left leg forward, flat foot, knee up; right knee on the floor, shin flat, foot
+laid back sole-up. Toes-tucked was tried and is impossible at these
+proportions (the foot is nearly as long as the shin; it held the knee 5 studs
+up and floated the planted foot 2.7 studs). The root height is never typed:
+`ground()` measures the lowest corner and puts it on `floorY`. **The
+long-standing "toes 12 studs inside the floor" defect is gone.**
+
+**Placement (`Sequences.lua`):** root at `ChamberFloor+(0,0,-36)`, facing the
+room, i.e. kneeling at the seal's RIM. Chosen from the set, not by eye: the
+forward foot must clear the iris (leaves slide 15 studs in 13a) and the raised
+race ring at r=17.5; nearest floor contact is now r=23.1. Chains are made fast
+to two iris leaves (`anchorHosts`), so opening the seal drags them taut before
+they break; links sit at a fixed pitch with pre-built hidden spares, so a
+stretched chain gets longer instead of gapping. The chest glyph band now uses
+`c.aegis.chestBand` (a plate above the core). Shots re-framed: `10a` (old
+offset put the lens inside the left chain - brown frame), `10d` (fixed focal
+point, lens behind the three leads so they are the scale reference, Aegis
+declared foreground since the focus is inside it), `32` (camera had moved
+outside the buttress ring). Chamber-mark eyelines now point at the chest.
+
+**Harness.** castcheck: Aegis on the floor within 0.05 in EVERY shot; no
+contact inside r=18.4 of the seal; lens never inside any Aegis/chain part
+(mutation-tested with the old 10a offset: fails); unbroken chains reach their
+anchor with no gaps (mutation-tested with no slack: fails); sealed knee AND
+planted sole on the floor; standing both soles on the floor; nothing below the
+floor in either pose; energy budget; no `Eye`; one visor band; core recessed
+behind its housing lip. 30c/31b/31e/31f were removed from
+`KNOWN_FRAMING_FLAGS`: they were being blocked by the old machine and now play
+as authored (so they are hard checks again). New isolated bench:
+`./tools/scenecheck/run.sh aegis` (clean/finished, standing/sealed/risen, front/
+3-4/side/back/silhouette, close-ups, a human for scale, printed dimensions and
+contact heights). `dump.luau` also captures 10b, 10c, 12e, 12k, 12l, 12m, 13c,
+31a, 31e, 32. `./tools/check.sh` clean; castcheck 51,217 / 0 failures;
+phase0a all pass. Captures in `docs/visual-rebuild/2026-09-23-aegis/`.
+
+**NOT verified in Studio.** Everything above is offline geometry. Owed: 10a-10d,
+12e-12m (awakening), 13a-13d (rise, chain failure), 31e, 32 in Play mode.
+Specific things the renderer cannot answer: whether `PlateOuter` (34,48,62)
+separates from the dark chamber at all under the real lights (the light accents
+may be carrying the whole read); how bright the core's PointLight (40 range,
+3.5) is; whether the ice patches read as frost or as blue plates. Known
+weaknesses: the laid-back right foot reads a little spiky from the side; the
+forward thigh's frost patch reads as a flat blue square in 10c; in the sealed
+front view the arms cover the chest-to-waist taper (it reads from 3/4 and when
+risen). The pre-existing `Chamber/3` mark-to-floor error (0.872) is unrelated.
+
 ## Known gaps / good next increments (roughly priority order)
 
 0. **A real Studio playtest of everything AFTER the command room.** The 2026-09-22
@@ -1878,12 +1964,9 @@ again rather than pulling focus back.
    function in `Effects.lua` is a natural place to add a
    `SoundService:PlayLocalSound`-style call). This requires the *user* to
    supply or approve asset IDs; do not invent them.
-3. **The Guardian and the Sovereign rigs**, still the oldest open item here
-   ("reads as primitive blocks", 2026-09-16). As of 2026-09-22 there is a
-   measured, concrete defect to start from: Aegis Zero's kneeling pose puts
-   its toe geometry ~12 studs below the chamber floor and its feet centred
-   exactly on it, so the Guardian is buried in the floor it is kneeling on.
-   `tools/scenecheck` can now show the chamber shots while that is fixed.
+3. **The Sovereign rig**, still "reads as primitive blocks" (2026-09-16).
+   Aegis Zero was redesigned 2026-09-23 (see that entry) and its floor defect
+   is fixed; it still needs a Studio look.
 
 4. **A dedicated boss defeat cinematic** (real camera work via a cutscene
    controller) rather than the current pose-hold — Scene 8 asks for a real

@@ -313,10 +313,11 @@ check("shot list built",#shots>40,string.format("%d shots",#shots))
  that is not on this list and starts failing is a regression this pass caused,
  and still fails the run.
 ]]
+-- 30c, 31b, 31e and 31f left this list with the 2026-09-23 Aegis rebuild:
+-- all four were being blocked by the old machine's geometry, and with the
+-- redesigned Aegis kneeling at the seal's rim they play as authored.
 local KNOWN_FRAMING_FLAGS={
- ["06_ThreePulses"]=true,["29e_TowerFalls"]=true,
- ["30c_TellThem"]=true,["31b_CanYouStopIt"]=true,["31e_ThousandsOfYears"]=true,
- ["31f_ProtectTogether"]=true,["37_AlienCarrier"]=true,
+ ["06_ThreePulses"]=true,["29e_TowerFalls"]=true,["37_AlienCarrier"]=true,
 }
 --[[
  AND THE LIST MUST NOT ROT.
@@ -328,6 +329,69 @@ local KNOWN_FRAMING_FLAGS={
  anything noticed, so the harness now checks its own waivers against the
  real shot list.
 ]]
+--[[
+ AEGIS ZERO ON THE FLOOR, IN EVERY SHOT.
+
+ The old rig knelt with its toes about twelve studs inside the chamber floor
+ for years, because its height was typed by hand. The new one is grounded by
+ measurement at build time; this proves it STAYS grounded through every pose
+ the film drives it through (awakening, rise, the struggle), that nothing it
+ stands on is the seal (whose leaves slide away in 13a) or the raised race
+ ring round it, and that an unbroken chain never pulls gaps open between its
+ links however far the opening seal drags its anchor.
+]]
+local Aegis=MOD.AegisCinematic
+local SEAL_CLEAR_RADIUS=18.4 -- outer edge of the seal race ring
+local aegisWorstFloor,aegisNearestContact=0,math.huge
+local function aegisAfterShot(index,name)
+ local r=cast.aegis
+ local floorY=MOD.Env.Zones.ChamberFloor.Y
+ local lowest,where=Aegis.lowestPoint(r)
+ aegisWorstFloor=math.max(aegisWorstFloor,math.abs(lowest-floorY))
+ check(string.format("shot %d %s keeps Aegis Zero on the floor",index,name),math.abs(lowest-floorY)<0.05,
+  string.format("%s is %.2f studs from the floor",where,lowest-floorY))
+ local centre=MOD.Env.Zones.ChamberFloor
+ for _,item in r.model:GetDescendants() do
+  if item:IsA("BasePart") and item~=r.root and not r.chainParts[item] then
+   local cf,half=rawget(item,"CFrame"),rawget(item,"Size")/2
+   for _,c in {V(-1,-1,-1),V(1,-1,-1),V(-1,1,-1),V(1,1,-1),V(-1,-1,1),V(1,-1,1),V(-1,1,1),V(1,1,1)} do
+    local p=cf*V(c.X*half.X,c.Y*half.Y,c.Z*half.Z)
+    if p.Y<floorY+1.2 then
+     local radius=V(p.X-centre.X,0,p.Z-centre.Z).Magnitude
+     aegisNearestContact=math.min(aegisNearestContact,radius)
+    end
+   end
+  end
+ end
+ check(string.format("shot %d %s keeps Aegis Zero off the seal",index,name),aegisNearestContact>SEAL_CLEAR_RADIUS,
+  string.format("contact geometry %.1f studs from the seal centre",aegisNearestContact))
+ -- The lens is never inside the machine or its chains. The first cut of the
+ -- rebuilt 10a put the camera on the left chain's run, and every other check
+ -- here passed: chain links are not obstruction-tested, so the frame was a
+ -- solid wall of bronze and nothing said so.
+ local eye=RBX.camera.CFrame.Position
+ local inside=nil
+ for _,item in r.model:GetDescendants() do
+  if item:IsA("BasePart") and item~=r.root and rawget(item,"Transparency")<0.9 then
+   local lp=rawget(item,"CFrame"):Inverse()*eye
+   local half=rawget(item,"Size")/2+V(0.3,0.3,0.3)
+   if math.abs(lp.X)<half.X and math.abs(lp.Y)<half.Y and math.abs(lp.Z)<half.Z then inside=rawget(item,"Name");break end
+  end
+ end
+ check(string.format("shot %d %s keeps the lens out of Aegis Zero",index,name),inside==nil,"lens inside "..tostring(inside))
+ for chainIndex,chain in r.chainData do
+  if not chain.broken then
+   local grip=chain.links[1][1].part
+   local anchor=chain.host and (chain.host.CFrame*chain.hostOffset).Position or chain.anchor
+   local lastLink=chain.links[chain.visible]
+   local lastCentre=(lastLink[1].part.Position+lastLink[2].part.Position)/2
+   check(string.format("shot %d %s chain %d reaches its anchor without gaps",index,name,chainIndex),
+    chain.visible<#chain.links and (lastCentre-anchor).Magnitude<2.5,
+    string.format("%d of %d links, last link %.2f studs short",chain.visible,#chain.links,(lastCentre-anchor).Magnitude))
+  end
+ end
+end
+
 local flagged={}
 do
  local byName={}
@@ -438,6 +502,7 @@ for index,shot in shots do
  end)
  check(string.format("shot %d %s runs",index,shot.name),ok,tostring(err))
  if shot.name==SEAL_FAILS then sealFailed=true end
+ aegisAfterShot(index,shot.name)
  if not sealFailed then
   local leak=lowerSealLeak()
   check(string.format("shot %d %s keeps the lower seal concealed",index,shot.name),leak==nil,tostring(leak))
@@ -475,6 +540,64 @@ if #flagged>0 then
  for _,entry in flagged do print("     - "..entry) end
 end
 print(string.format("   closest the lens ever comes to a character: %.2f studs (%s)",tightestLens,tightestLensWhere))
+print(string.format("   Aegis Zero: lowest point %.3f studs from the chamber floor over the whole film, nearest floor contact %.1f studs from the seal's centre",aegisWorstFloor,aegisNearestContact))
+
+--------------------------------------------------------------------------------
+-- AEGIS ZERO, the design rules the 2026-09-23 rebuild is held to.
+--------------------------------------------------------------------------------
+print("== Aegis Zero: one visor, a contained core, grounded in both poses ==")
+do
+ local bench=Instance.new("Folder");bench.Parent=RBX.workspace
+ local r=Aegis.build(bench,CFrame.new(V(0,500,0)),10,{floorY=100})
+ local function bottom(name)
+  local p=r.model:FindFirstChild(name)
+  local cf,half=rawget(p,"CFrame"),rawget(p,"Size")/2
+  local low=math.huge
+  for _,c in {V(-1,-1,-1),V(1,-1,-1),V(-1,1,-1),V(1,1,-1),V(-1,-1,1),V(1,-1,1),V(-1,1,1),V(1,1,1)} do
+   low=math.min(low,(cf*V(c.X*half.X,c.Y*half.Y,c.Z*half.Z)).Y)
+  end
+  return low-100
+ end
+ -- Sealed: the planted foot AND the down knee are both on the floor - not
+ -- one on it and the other hovering, which is what "kneeling" means.
+ check("sealed kneel: planted left sole is on the floor",math.abs(bottom("LeftSole"))<0.1,string.format("%.2f",bottom("LeftSole")))
+ check("sealed kneel: right knee is on the floor",math.abs(bottom("RightKneeCap"))<0.1,string.format("%.2f",bottom("RightKneeCap")))
+ check("sealed kneel: nothing below the floor",Aegis.lowestPoint(r)>=100-0.01,string.format("%.3f",Aegis.lowestPoint(r)-100))
+ -- Awake and fully risen: the two energy locations plus the thin channels,
+ -- and nothing else on the machine is Neon.
+ Aegis.setAwaken(r,1);Aegis.setRise(r,1)
+ local allowed={[r.core]=true}
+ for _,v in r.visors do allowed[v]=true end
+ for _,ch in r.channels do allowed[ch]=true end
+ local neon,stray=0,{}
+ for _,item in r.model:GetDescendants() do
+  if item:IsA("BasePart") and rawget(item,"Material")==Enum.Material.Neon then
+   neon+=1
+   if not allowed[item] then table.insert(stray,rawget(item,"Name")) end
+  end
+  check("Aegis has no two-eye face",not (item:IsA("BasePart") and rawget(item,"Name")=="Eye"),"a part named Eye")
+ end
+ check("Aegis energy budget: visor, core and channels only",#stray==0,table.concat(stray,", "))
+ print(string.format("   %d Neon parts when fully awake (visor segments, core, %d channels)",neon,#r.channels))
+ -- One visor BAND: every segment on one horizontal line across the face.
+ local y0=nil
+ for _,v in r.visors do
+  local y=(rawget(r.head,"CFrame"):Inverse()*rawget(v,"CFrame")).Position.Y
+  y0=y0 or y
+  check("the visor is one horizontal band",math.abs(y-y0)<0.01,string.format("segment at %.2f vs %.2f",y,y0))
+ end
+ -- The core is recessed: its face sits behind the housing lip around it.
+ local torsoCF=rawget(r.torso,"CFrame")
+ local coreFront=(torsoCF:Inverse()*rawget(r.core,"CFrame")).Position.Z-rawget(r.core,"Size").X/2
+ local lip=r.model:FindFirstChild("HousingTop")
+ local lipFront=(torsoCF:Inverse()*rawget(lip,"CFrame")).Position.Z-rawget(lip,"Size").Z/2
+ check("the core sits recessed behind its housing",coreFront>lipFront,string.format("core face %.2f, lip %.2f",coreFront,lipFront))
+ Aegis.setStanding(r)
+ check("standing: left sole on the floor",math.abs(bottom("LeftSole"))<0.1,string.format("%.2f",bottom("LeftSole")))
+ check("standing: right sole on the floor",math.abs(bottom("RightSole"))<0.1,string.format("%.2f",bottom("RightSole")))
+ check("standing: nothing below the floor",Aegis.lowestPoint(r)>=100-0.01,string.format("%.3f",Aegis.lowestPoint(r)-100))
+ bench:Destroy()
+end
 
 -- Subtitle discipline: short enough to read in the time they are on screen.
 local longest,longestText=0,""

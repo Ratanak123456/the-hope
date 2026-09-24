@@ -13,13 +13,16 @@ castcheck = root / "tools/castcheck"
 
 SETS = {
     "opening": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
-                 "GlyphLanguage", "Instrumentation", "ExcavationRig", "Env", "CharacterAppearance", "Cast", "Lighting",
+                 "GlyphLanguage", "Instrumentation", "ExcavationRig", "Env", "CharacterAppearance", "AegisCinematic", "Cast", "Lighting",
                  "PerformanceDirector", "Camera", "Sequences"], "dump.luau"),
     "menu": (["Signal", "Config", "Palette", "AegisRig", "Responsive", "Settings",
               "MenuScene"], "menu.luau"),
+    # Aegis Zero on its own, clean and finished. See aegis.luau.
+    "aegis": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
+               "GlyphLanguage", "Instrumentation", "ExcavationRig", "Env", "CharacterAppearance", "AegisCinematic", "Cast"], "aegis.luau"),
     # Every human in the opening, on a neutral stage. See lineup.luau.
     "lineup": (["Signal", "Config", "Palette", "Settings", "Kit", "VehicleMotion",
-                "GlyphLanguage", "Instrumentation", "ExcavationRig", "Env", "CharacterAppearance", "Cast", "Lighting",
+                "GlyphLanguage", "Instrumentation", "ExcavationRig", "Env", "CharacterAppearance", "AegisCinematic", "Cast", "Lighting",
                 "PerformanceDirector", "Camera", "Sequences"], "lineup.luau"),
 }
 PATHS = {
@@ -34,6 +37,7 @@ PATHS = {
     "VehicleMotion": "src/client/NorthPole/VehicleMotion.lua",
     "CharacterAppearance": "src/client/NorthPole/CharacterAppearance.lua",
     "Sequences": "src/client/NorthPole/Sequences.lua",
+    "AegisCinematic": "src/client/NorthPole/AegisCinematic.lua",
     "GlyphLanguage": "src/client/NorthPole/GlyphLanguage.lua",
     "Instrumentation": "src/client/NorthPole/Instrumentation.lua",
     "ExcavationRig": "src/client/NorthPole/ExcavationRig.lua",
